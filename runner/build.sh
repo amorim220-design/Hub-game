@@ -95,8 +95,10 @@ chmod +x ./gradlew 2>/dev/null || true
     -Pandroid.injected.build.abi="$ANDROID_ABI" \
     assembleRelease
 
-APK="$(find "$APP_DIR/build/outputs/apk/release" -name '*.apk' | head -n 1)"
-[ -n "$APK" ] || die "APK nao encontrado em build/outputs/apk/release"
+# O modulo Android fica em <winlator-app>/app, entao os artefatos podem estar
+# em app/build/... ou app/app/build/... (depende da estrutura do upstream).
+APK="$(find "$APP_DIR" -path '*/outputs/apk/release/*.apk' 2>/dev/null | head -n 1 || true)"
+[ -n "$APK" ] || die "APK nao encontrado em $APP_DIR (outputs/apk/release)"
 
 # --- 5. collect -------------------------------------------------------------
 mkdir -p "$DIST"
