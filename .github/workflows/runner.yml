@@ -1,0 +1,67 @@
+name: Build runner APK (Winlator base)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "runner/**"
+      - ".github/workflows/runner.yml"
+
+jobs:
+  build:
+    name: Build and sign the runner APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle (cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the runner APK
+        env:
+          KEYSTORE_PATH: runner/keystore/runner.keystore
+          STORE_PASSWORD: runner
+          KEY_ALIAS: runner
+          KEY_PASSWORD: runner
+        run: |
+          set +e
+          ./runner/build.sh 2>&1 | tee runner-build.log
+          status=${PIPESTATUS[0]}
+          {
+            echo "### Runner build output"
+            echo '```'
+            tail -n 250 runner-build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E "^e: |error:|FAILURE:|What went wrong|> Task .* FAILED|Caused by:|ERROR:" runner-build.log \
+            | head -40 \
+            | while IFS= read -r line; do
+                echo "::error title=Runner::${line}"
+              done
+          exit $status
+
+      - name: Upload the runner APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hubgame-runner-arm64
+          path: runner/dist/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload the build log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runner-build-log
+          path: runner-build.log
+          retention-days: 7
+          if-no-files-found: warn
