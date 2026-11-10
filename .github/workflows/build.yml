@@ -91,7 +91,7 @@ jobs:
           KEY_PASSWORD: android
           KEY_ALIAS: upload
         run: |
-          set -o pipefail
+          set +e
           ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease 2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           {
