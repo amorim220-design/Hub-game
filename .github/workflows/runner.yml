@@ -44,9 +44,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           # O GitHub limita a 10 anotacoes por passo: o log inteiro vai em uma
           # unica anotacao (com %0A no lugar das quebras de linha).
-          tail -n 70 runner-build.log \
-            | awk 'BEGIN{ORS=""} {gsub(/%/,"%25",$0); gsub(/\r/,"",$0); printf "%s%%0A", $0}'
-            | { read -r PAYLOAD; echo "::error title=Runner::${PAYLOAD}"; }
+          PAYLOAD=$(tail -n 70 runner-build.log | sed 's/%/%25/g' | tr '\n' '\001' | sed 's/\x01/%0A/g')
+          echo "::error title=Runner::${PAYLOAD}"
           exit $status
 
       - name: Upload the runner APK
