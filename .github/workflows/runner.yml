@@ -42,11 +42,13 @@ jobs:
             tail -n 250 runner-build.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          grep -E "^e: |error:|FAILURE:|What went wrong|> Task .* FAILED|Caused by:|ERROR:" runner-build.log \
-            | head -40 \
-            | while IFS= read -r line; do
-                echo "::error title=Runner::${line}"
-              done
+          {
+            grep -E "^e: |error:|FAILURE:|What went wrong|> Task .* FAILED|Caused by:|ERROR:|\[runner\]" runner-build.log | head -40
+            echo "--- context ---"
+            awk '/What went wrong|FAILURE:/{flag=1} flag{print; n++} n>35{exit}' runner-build.log
+          } | while IFS= read -r line; do
+              echo "::error title=Runner::${line}"
+            done
           exit $status
 
       - name: Upload the runner APK
