@@ -1,161 +1,181 @@
 # VulkanCompatShell (D3D9 / Vulkan Compatibility Layer for Android ARM64)
 
-Compatibilidade e shell de execução para jogos de PC (Direct3D 9) em dispositivos Android ARM64 (AArch64), baseado na arquitetura de interposição de bibliotecas com Vulkan e DXVK.
+Shell de execução para jogos de PC (Direct3D 9) em dispositivos Android ARM64
+(AArch64), baseado em interposição de biblioteca, DXVK (D3D9 → Vulkan) e pacotes de
+runtime fornecidos pelo usuário.
+
+> **Este repositório não contém nenhum jogo.** O app é a casca: interposição de
+> biblioteca, apresentação Vulkan, opções, instalação de pacotes e diagnóstico.
+> O jogo (motor + dados) é trazido pelo usuário.
 
 ---
 
-## 1. Arquitetura Geral do Sistema (ASCII Diagram)
+## 1. Arquitetura Geral do Sistema
 
 ```
 +---------------------------------------------------------------------------------------+
-|                                    ANDROID SYSTEM                                     |
-|  +---------------------------------------------------------------------------------+  |
-|  | PROCESS: com.aistudio.vulkancompat.qznvwt (Launcher UI - Jetpack Compose)       |  |
-|  |   - PackageInstaller (Zip Slip Safe, ELF ARM64 Enforcement)                     |  |
-|  |   - DriverInstaller (Custom Vulkan Drivers Mesa Turnip/Adreno)                  |  |
-|  |   - OptionsManager (Resolutions, FPS Limit, Widescreen HUD, Minimap, Shaders)   |  |
-|  |   - Diagnostics (Telemetry, Logcat capture, .zip generation)                   |  |
-|  +---------------------------------------------------------------------------------+  |
-|                                         |                                             |
-|                     IPC / SharedPreferences / Intent Extras                           |
-|                                         v                                             |
-|  +-------------------------------------+   +---------------------------------------+  |
-|  | PROCESS: :gpu_probe                 |   | PROCESS: :game (Isolated Native Game) |  |
-|  |  - GpuProbeActivity                 |   |  - GameActivity (NativeActivity)      |  |
-|  |  - NativeBridge.probeVulkanGpu()    |   |  - ANativeActivity_onCreate           |  |
-|  |  (Tests Vulkan 1.1 safely without   |   |  - Background Game Loop Thread (TID)  |  |
-|  |   crashing the Launcher UI)         |   |  - Touch / Gamepad / Keyboard Dispatch|  |
-|  +-------------------------------------+   +---------------------------------------+  |
-|                                                        |                              |
-|                                        Dynamic Linker Interposition                   |
-|                                                        v                              |
-|  +---------------------------------------------------------------------------------+  |
-|  |                   C / C++ NATIVE INTERPOSITION LAYER (ARM64)                    |  |
-|  |                                                                                 |  |
-|  |  [libmain_hook.so]                                                              |  |
-|  |    Exports: android_dlopen_ext, android_load_sphal_library                      |  |
-|  |    DT_NEEDED: libhook_impl.so                                                   |  |
-|  |                                                                                 |  |
-|  |  [libfile_redirect_hook.so]                                                     |  |
-|  |    Exports: fopen, fopen64, open (Redirects "C:\..." -> /storage/.../game_dir)  |  |
-|  |    DT_NEEDED: libhook_impl.so                                                   |  |
-|  |                                                                                 |  |
-|  |  [libgsl_alloc_hook.so]                                                         |  |
-|  |    Exports: gsl_memory_alloc_pure, gsl_memory_alloc_pure_64, gsl_memory_free_pure|  |
-|  |    DT_NEEDED: libhook_impl.so (64-bit aligned safe driver memory allocation)    |  |
-|  |                                                                                 |  |
-|  |  [libhook_impl.so]                                                              |  |
-|  |    - Symbol Cache (dlsym RTLD_NEXT: real_android_dlopen_ext, real_fopen, etc.)    |  |
-|  |    - Vulkan Driver Interceptor:                                                 |  |
-|  |        "libvulkan.so" requested -> loads custom driver (%s%s) or default (%s)   |  |
-|  |    - Binary Patcher Interceptor:                                                |  |
-|  |        "%s/%d_patched.so" -> loads patched engine elf                           |  |
-|  |                                                                                 |  |
-|  |  [libcompat_runtime.so]                                                         |  |
-|  |    - ANativeWindow Surface Management                                           |  |
-|  |    - DXVK Bridge (dxvkAndroidSetWindow, dxvkAndroidSetRenderSize, etc.)         |  |
-|  |    - DXVK Configuration generator (dxvk.conf, vulkan_pipelines.bin)             |  |
-|  |    - Vulkan 1.1 Instance & VkSurfaceKHR Creation                                |  |
-|  +---------------------------------------------------------------------------------+  |
-|                                         |                                             |
-|                                         v                                             |
-|  +---------------------------------------------------------------------------------+  |
-|  | USER GAME RUNTIME (.so ARM64, ex.: Recompiled D3D9 Engine + Embedded DXVK)      |  |
-|  +---------------------------------------------------------------------------------+  |
-|                                         |                                             |
-|                                         v                                             |
-|  +---------------------------------------------------------------------------------+  |
-|  | GAME ASSETS DIRECTORY (User provided PC files: tracks, sound, models, textures) |  |
-|  +---------------------------------------------------------------------------------+  |
+|                              ANDROID (processo do launcher)                             |
+|  LauncherActivity (Compose): opções, pacotes de runtime, drivers, diagnóstico          |
+|  GameActivity  -> NativeActivity, processo isolado ":game"                             |
++---------------------------------------------------------------------------------------+
+        | JNI (NativeBridge)                | dlopen(RTLD_GLOBAL) em JNI_OnLoad
+        v                                   v
++---------------------------------------------------------------------------------------+
+|  libcompat_runtime.so   ANativeActivity, VkSurface, loop, JNI, DXVK bridge              |
+|  libhook_impl.so        núcleo dos hooks (implementação, cache de ponteiros reais)      |
+|  libmain_hook.so        exporta android_dlopen_ext / android_load_sphal_library        |
+|  libfile_redirect_hook.so  exporta fopen / fopen64 / open  (redireciona "C:\...")       |
+|  libgsl_alloc_hook.so   exporta gsl_memory_alloc_pure(_64) / gsl_memory_free_pure       |
++---------------------------------------------------------------------------------------+
+        |  o runtime do jogo é carregado depois, com RTLD_GLOBAL
+        v
++---------------------------------------------------------------------------------------+
+|  PACOTE DE RUNTIME DO USUÁRIO  (.so ARM64: motor + DXVK embutido)                      |
+|      pontos de entrada opcionais:  game_main_tick()  ·  pcshim_input_event(event)       |
++---------------------------------------------------------------------------------------+
+        |
+        v
++---------------------------------------------------------------------------------------+
+|  DADOS DO JOGO  (pasta escolhida pelo usuário: trilha, som, modelos, texturas)         |
 +---------------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 2. Ordem Crítica de Carregamento das Bibliotecas
+## 2. Ordem de carregamento das bibliotecas (o ponto crítico)
 
-No Android (Bionic libc/linker), os símbolos são resolvidos com prioridade na ordem em que as bibliotecas compartilhadas são carregadas no espaço de endereçamento global (`RTLD_GLOBAL` / `System.loadLibrary`).
+No Bionic, a resolução de símbolos é feita por ordem de carga no **escopo global**.
+Duas regras determinam se a interposição funciona:
 
-Para que a interposição de símbolos funcione de forma transparente e infalível, as bibliotecas **DEVEM** ser carregadas exatamente nesta ordem:
+1. **RTLD_GLOBAL é obrigatório.** `System.loadLibrary()` (o caminho normal do Java)
+   **não** usa `RTLD_GLOBAL`, então os símbolos exportados ficam no grupo local da
+   própria biblioteca e ninguém mais os enxerga.
+2. **A primeira carga é a que vale.** No Bionic, carregar de novo uma biblioteca
+   já carregada **não** promove ela ao escopo global. Logo, se ela for carregada
+   sem `RTLD_GLOBAL` primeiro, a interposição nunca acontece.
 
-1. `libhook_impl.so`:
-   Inicializa a estrutura interna de sincronização, armazena caminhos da pasta do jogo, driver customizado e localiza os ponteiros originais do sistema (`libc.so`, `libdl.so`) via `RTLD_NEXT` e `dlsym`.
-2. `libmain_hook.so`:
-   Possui dependência ELF direta (`DT_NEEDED`) de `libhook_impl.so` e exporta com visibilidade padrão `android_dlopen_ext` e `android_load_sphal_library`. Quando qualquer código nativo subsequente invoca `android_dlopen_ext`, o Bionic resolve para a nossa função exportada.
-3. `libfile_redirect_hook.so`:
-   Exporta `fopen`, `fopen64` e `open`. Intercepta todas as tentativas do jogo de abrir caminhos legados do Windows (como `C:\Games\NFS\Tracks\...` ou caminhos relativos com barra invertida `\`) e os traduz para o diretório de dados do jogo montado no Android.
-4. `libgsl_alloc_hook.so`:
-   Exporta alocadores do subsistema GSL da Qualcomm/Adreno (`gsl_memory_alloc_pure`, `gsl_memory_alloc_pure_64`, `gsl_memory_free_pure`) garantindo alinhamento de 64 bytes e limites seguros de memória de 64 bits para motores de jogos legados de 32 bits.
-5. `libcompat_runtime.so`:
-   Runtime principal com ciclo de vida `ANativeActivity`, integração com o DXVK Bridge, criação da superfície Vulkan (`VkSurfaceKHR`) e loop do jogo.
-6. `lib<app_runtime>.so` (Pacote de Runtime do Usuário):
-   Carregado por último. Ao carregar, todas as suas chamadas para `dlopen("libvulkan.so")` e `fopen(...)` são automaticamente filtradas e tratadas pelos nossos hooks.
+Por isso o carregamento **não** é feito pelo Java, e sim em `JNI_OnLoad` de
+`libcompat_runtime.so` — o primeiro código nosso a rodar no processo:
+
+```c++
+static bool load_hook_libraries() {
+    static const char* kHookLibs[] = {
+        "libhook_impl.so",          // núcleo
+        "libmain_hook.so",          // android_dlopen_ext
+        "libfile_redirect_hook.so", // fopen / open
+        "libgsl_alloc_hook.so",     // alocadores GSL
+    };
+    for (const char* name : kHookLibs) {
+        dlopen(name, RTLD_NOW | RTLD_GLOBAL);   // <- o GLOBAL é o ponto
+    }
+}
+```
+
+`libhook_impl.so` é a única dessas libs linked em `libcompat_runtime.so`
+(`DT_NEEDED`), porque o runtime chama a API dele diretamente
+(`hook_set_game_dir`, ...). As outras três **não** podem ser `DT_NEEDED` de
+nada: seriam carregadas sem `RTLD_GLOBAL` antes do `dlopen` acima.
+
+### Limitação honesta da interposição
+
+O `libfile_redirect_hook.so` exporta `fopen`/`open`, mas a `libc.so` já está no
+escopo global desde o início do processo e é consultada **antes**. A resolução de
+símbolo no linker é "primeiro encontrado", então a libc vence.
+
+Consequência prática: o redirecionamento de caminhos só é garantido para
+chamadas que partem de bibliotecas **carregadas depois** dos hooks e que não
+passem pela libc do sistema. Para ter garantia total, o caminho robusto é:
+
+- **o pacote de runtime chamar a API diretamente** — `libhook_impl.so` exporta
+  `hook_set_game_dir()` / `hook_get_game_dir()`, e o runtime resolve com
+  `dlsym(RTLD_DEFAULT, "hook_set_game_dir")`; ou
+- **injetar `DT_NEEDED` da lib de hook no ELF do runtime** (o `patcher.cpp` já
+  reescreve ELFs; a injeção de `DT_NEEDED` é o próximo passo natural).
+
+O estado de tudo isso está em `NativeBridge.hookStatus()` e vai para o
+diagnóstico (`native_state.json`).
 
 ---
 
-## 3. Como Cadastrar e Empacotar um Pacote de Runtime
+## 3. Pacote de runtime (o que o usuário traz)
 
-O pacote de runtime deve ser fornecido pelo usuário em formato ZIP sem dados comerciais.
+ZIP com `meta.json` e a biblioteca do motor:
 
-### Estrutura interna do ZIP:
 ```
 meu_runtime_arm64.zip
 ├── meta.json
-└── libgame_engine.so
+└── libgame_engine.so      (ELF 64-bit, e_machine = 0xB7 / AArch64)
 ```
 
-### Exemplo de `meta.json`:
 ```json
 {
-  "name": "DXVK D3D9 Runtime",
-  "version": "1.10.3",
-  "author": "Community Port",
+  "name": "Meu runtime D3D9",
+  "version": "1.0.0",
+  "author": "comunidade",
   "mainLibrary": "libgame_engine.so"
 }
 ```
 
-### Regras de Validação do Instalador:
-1. **Zip Slip Protection**: Rejeita qualquer entrada contendo sequências `..` ou caminhos canônicos que tentem escapar do diretório de sandbox do aplicativo (`/data/user/0/<package>/files/runtimes/`).
-2. **Limite de Tamanho**: Limite padrão de 500 MB descompactado para evitar Zip Bombs.
-3. **Validação ELF ARM64**:
-   - Cabeçalho ELF validado: `\x7fELF`.
-   - Classe ELF: 64-bit (`EI_CLASS = 2`).
-   - Arquitetura: `e_machine = 0x00B7` (AArch64 / ARM64).
-   - Executáveis PE de Windows (`.exe` / `.dll` com cabeçalho `MZ`) ou binários x86 / x86_64 de PC são **rejeitados com mensagem explicativa** orientando o usuário a recompilar ou fornecer a camada tradutora ARM64.
+Validações do instalador (`PackageInstaller.kt`):
+
+1. **Zip Slip** — entradas com `..` ou caminho canônico fora de
+   `files/runtimes/` são rejeitadas.
+2. **Tamanho** — limite de descompactação (anti zip bomb).
+3. **Arquitetura** — cabeçalho ELF, classe 64-bit, `e_machine = 0xB7`.
+   Executáveis PE (`MZ`) e binários x86/x86-64 de PC são **rejeitados com
+   mensagem explícita**: o app não emula CPU x86.
+
+### Contrato opcional com o runtime
+
+O runtime pode exportar dois pontos de entrada (ambos opcionais):
+
+```c
+void game_main_tick(void);                        // chamado pelo loop do app
+int  pcshim_input_event(const AInputEvent* ev);   // recebe teclado/toque/gamepad
+```
+
+Sem `game_main_tick`, o runtime conduz o próprio loop e o app só mantém a
+janela viva e mede FPS. Sem `pcshim_input_event`, os eventos são apenas
+registrados no log.
 
 ---
 
-## 4. Como Cadastrar um Driver Vulkan Customizado
+## 4. Driver Vulkan customizado
 
-Drivers Vulkan otimizados para GPU Adreno (como builds do **Mesa Turnip / Freedreno**) podem ser instalados via ZIP:
+Drivers otimizados (Mesa Turnip/Freedreno para Adreno, por exemplo) são
+instalados como ZIP:
 
 ```
-turnip_v24_driver.zip
+turnip_driver.zip
 ├── meta.json
 └── vulkan.adreno.so
 ```
 
-### Exemplo de `meta.json`:
-```json
-{
-  "name": "Mesa Turnip Driver",
-  "version": "24.2.0-devel",
-  "author": "Freedreno",
-  "minVulkanVersion": "1.1",
-  "driverFileName": "vulkan.adreno.so"
-}
-```
+Quando ativo, o hook `hook_android_dlopen_ext` intercepta o pedido de
+`libvulkan.so` e carrega o driver escolhido:
 
-Quando ativado na aba **Drivers Vulkan**, o hook `hook_android_dlopen_ext` intercepta solicitações para `libvulkan.so` e carrega o driver customizado selecionado.
+```
+loading custom driver: <caminho>
+loading default driver: libvulkan.so      (fallback)
+```
 
 ---
 
-## 5. Como Aplicar Patches Binários ao ELF do Jogo
+## 5. Patches binários no ELF do motor
 
-O sistema inclui o módulo `patcher.cpp` que lê a biblioteca ELF do motor, valida o cabeçalho e aplica substituições de bytes diretamente em offsets pré-determinados (ex.: ajustes de FOV widescreen, remoção de chamadas legadas a DirectDraw ou ajustes de memória), gerando um arquivo de cache executável:
-`%s/%d_patched.so`
+`patcher.cpp` lê a biblioteca, valida o cabeçalho e aplica substituições de
+bytes em offsets declarados, gravando a cópia patcheada. Nomes suportados:
 
-### Formato JSON para Patches:
+- `<patch_dir>/<basename>_patched.so` — um conjunto de patches por biblioteca
+  (ex.: `libgame_engine.so` → `libgame_engine_patched.so`);
+- `<patch_dir>/<n>_patched.so` — layout legado (`1_patched.so`, `2_patched.so`...).
+
+A substituição só acontece para uma biblioteca que **existe de fato** no disco
+(caminho pedido ou diretório do runtime), então bibliotecas do sistema nunca são
+ sequestradas.
+
+Formato JSON dos patches:
+
 ```json
 [
   {
@@ -163,47 +183,78 @@ O sistema inclui o módulo `patcher.cpp` que lê a biblioteca ELF do motor, vali
     "expected": "80 1F 00 71",
     "replacement": "1F 20 03 D5",
     "desc": "NOP out DirectSound init check"
-  },
-  {
-    "offset": 1048576,
-    "expected": "00 00 80 3F",
-    "replacement": "39 8E E3 3F",
-    "desc": "Set aspect ratio constant to 16:9 (1.777f)"
   }
 ]
 ```
 
 ---
 
-## 6. Limitações Técnicas & Notas de Risco
+## 6. Limitações técnicas
 
-1. **Instruções x86 não rodam diretamente em ARM64**:
-   O aplicativo não inclui emulador de CPU x86 de propósito comercial. O código do jogo deve ser recompilado nativamente para ARM64 (`aarch64-linux-android`) ou integrado a um tradutor dinâmico ARM64 compatível com a plataforma Android.
-2. **Compatibilidade de Drivers Vulkan Proprietary (Qualcomm vs MediaTek/Mali)**:
-   A interposição de driver customizado (ex.: Mesa Turnip) funciona primariamente em chipsets Qualcomm Snapdragon com GPUs Adreno 6xx/7xx. Dispositivos com GPUs ARM Mali ou PowerVR devem usar o driver padrão do sistema.
-3. **Scoped Storage no Android 11+ (API 30+)**:
-   O shell implementa tanto permissões de acesso com fallback para o Storage Access Framework (`ACTION_OPEN_DOCUMENT_TREE`) quanto `MANAGE_EXTERNAL_STORAGE` para permitir que motores com centenas de arquivos de texturas leiam dados com alta taxa de I/O diretamente do sistema de arquivos.
-4. **Isolamento de Processos**:
-   - `:gpu_probe`: executa sondas Vulkan isoladas de modo que qualquer travamento no driver proprietário não encerre a interface de usuário.
-   - `:game`: executa o motor do jogo como `NativeActivity`, isolando o estado e evitando vazamento de memória para a UI do Launcher.
+1. **x86 não roda sozinho.** O app não traz emulador de CPU. O motor precisa
+   ser recompilado para ARM64 ou vir acompanhado de uma camada de tradução
+   (FEX/Box64 + Win32), que é responsabilidade do pacote de runtime.
+2. **DXVK não está no repositório.** O upstream do DXVK não tem alvo Android e
+   o binário é de terceiros. Ele entra (a) dentro do pacote de runtime do
+   usuário ou (b) como `libdxvk.so` pré-compilado para arm64-v8a colocado em
+   `third_party/dxvk-prebuilt/lib/arm64-v8a/` (a CI baixa se a variável
+   `DXVK_PREBUILT_URL` estiver definida).
+3. **Uma VkInstance só.** Se o runtime (DXVK) está ativo, ele é o dono da
+   instância e da surface; o app **não** cria uma segunda (a surface pertence
+   à instância que a criou).
+4. **Ordem de resolução de símbolos** — ver seção 2.
+5. **Escopo de armazenamento (Android 11+).** O app usa
+   `ACTION_OPEN_DOCUMENT_TREE` e `MANAGE_EXTERNAL_STORAGE` para que os motores
+   leiam milhares de arquivos de textura com I/O alto.
+6. **Isolamento de processos.** `:gpu_probe` testa o Vulkan sem derrubar a UI;
+   `:game` executa o motor isolado.
+
+### Sobre o alocador GSL
+
+`gsl_memory_alloc_pure` / `gsl_memory_alloc_pure_64` /
+`gsl_memory_free_pure` pertencem ao **GSL (Games for Windows/Linux)**, o
+alocador do motor clássico da EA/Black Box (usado por NFS Underground 2). Não
+tem relação com drivers Qualcomm/Adreno. O hook existe porque o jogo é 32-bit
+e precisa de blocos alinhados a 64 bytes e limpos em 64 bits no ARM64.
 
 ---
 
-## 7. Comandos de Build Local
+## 7. Build
 
-Para compilar o projeto em sua máquina local Linux / macOS:
+Requisitos: JDK 17, Android SDK (platform 35, build-tools 35, CMake 3.22.1,
+NDK 27.2.12479018). O wrapper do Gradle está no repositório.
 
 ```bash
-# 1. Definir variáveis de ambiente
-export ANDROID_HOME=$HOME/Android/Sdk
-export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
+# build de teste
+./gradlew :app:testDebugUnitTest
 
-# 2. Executar testes locais unitários e Robolectric
-gradle :app:testDebugUnitTest
+# APK debug (arm64-v8a, C++ via CMake/NDK)
+./gradlew :app:assembleDebug
 
-# 3. Compilar APK Debug (arm64-v8a com C++ CMake e NDK)
-gradle :app:assembleDebug
-
-# 4. Compilar APK Release assinado
-gradle :app:assembleRelease
+# APK release assinado
+export KEYSTORE_PATH=my-upload-key.jks
+export STORE_PASSWORD=... KEY_PASSWORD=... KEY_ALIAS=upload
+./gradlew :app:assembleRelease
 ```
+
+Sem `KEYSTORE_PATH`/`STORE_PASSWORD`/`KEY_PASSWORD`, o build release usa o
+keystore de debug (o APK sai instalável, mas não é o que vai para a Play
+Store).
+
+### CI (GitHub Actions)
+
+`.github/workflows/build.yml` faz: checkout → JDK 17 → SDK/NDK/CMake →
+keystores → testes → `assembleDebug`/`assembleRelease` → upload dos artefatos.
+O APK release já sai assinado pelo AGP (não há passo extra de `apksigner`).
+
+---
+
+## 8. Roteiro do que ainda falta
+
+- [ ] Injeção de `DT_NEEDED` no ELF do runtime, para interposição garantida de
+      `fopen`/`open` (hoje ela depende da ordem de resolução de símbolos).
+- [ ] `pcshim_input_event` com mapeamento completo (teclado, mouse, gamepad).
+- [ ] Patch set pronto para o `WidescreenFix.dat` no formato do motor EA.
+- [ ] Pacote de runtime de referência, com DXVK para arm64 empacotado.
+- [ ] Teste em dispositivo real (o CI só compila; não há emulador Vulkan com
+      surface Android no runner).

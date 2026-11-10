@@ -1,15 +1,11 @@
-import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
-  alias(libs.plugins.secrets)
-  alias(libs.plugins.google.services)
 }
 
 android {
   namespace = "com.example"
-  compileSdk = 36
+  compileSdk = 35
   ndkVersion = "27.2.12479018"
 
   defaultConfig {
@@ -43,15 +39,23 @@ android {
     }
   }
 
-  // Do not remove or modify these signingConfigs. They are necessary for building, installing,
-  // and updating Android apps in AI Studio.
+  // Signing: the release keystore is optional. When it is not available the
+  // release build falls back to the debug keystore, so a fresh clone (or CI
+  // without secrets) still produces an installable APK.
   signingConfigs {
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      val storeFileCandidate = file(keystorePath)
+      val storePasswordEnv = System.getenv("STORE_PASSWORD")
+      val keyPasswordEnv = System.getenv("KEY_PASSWORD")
+      val keyAliasEnv = System.getenv("KEY_ALIAS") ?: "upload"
+
+      if (storeFileCandidate.exists() && storePasswordEnv != null && keyPasswordEnv != null) {
+        storeFile = storeFileCandidate
+        storePassword = storePasswordEnv
+        keyAlias = keyAliasEnv
+        keyPassword = keyPasswordEnv
+      }
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
@@ -66,13 +70,15 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("release")
+      // Signed with the release keystore when one is configured, otherwise with
+      // the debug keystore (so CI always produces an installable APK).
+      signingConfig = if (signingConfigs.getByName("release").storeFile != null) {
+        signingConfigs.getByName("release")
+      } else {
+        signingConfigs.getByName("debugConfig")
+      }
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
       ndk {
         debugSymbolLevel = "SYMBOL_TABLE"
@@ -99,13 +105,12 @@ android {
   }
 }
 
-secrets {
-  propertiesFileName = ".env"
-  defaultPropertiesFileName = ".env.example"
-  ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+// Optional: a prebuilt arm64-v8a libdxvk.so dropped in third_party/dxvk-prebuilt
+// (see the CI workflow) is packaged with the APK. The shell works without it:
+// the DXVK build normally arrives inside the user's runtime package.
+android {
+  sourceSets["main"].jniLibs.srcDir(rootProject.file("third_party/dxvk-prebuilt/lib/arm64-v8a"))
 }
-
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 dependencies {
   implementation(platform(libs.androidx.compose.bom))

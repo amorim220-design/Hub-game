@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <algorithm>
 #include <mutex>
 #include <string>
@@ -14,6 +15,7 @@
 
 static std::mutex g_config_mutex;
 static std::string g_game_dir = "";
+static std::string g_runtime_dir = "";
 static std::string g_custom_driver_path = "";
 static std::string g_patch_dir = "";
 static int g_redirect_enabled = 1;
@@ -76,6 +78,17 @@ const char* hook_get_game_dir() {
     return g_game_dir.c_str();
 }
 
+void hook_set_runtime_dir(const char* dir) {
+    std::lock_guard<std::mutex> lock(g_config_mutex);
+    g_runtime_dir = dir ? dir : "";
+    LOGI("Hook runtime directory configured: %s", g_runtime_dir.c_str());
+}
+
+const char* hook_get_runtime_dir() {
+    std::lock_guard<std::mutex> lock(g_config_mutex);
+    return g_runtime_dir.c_str();
+}
+
 void hook_set_custom_driver_path(const char* driver_path) {
     std::lock_guard<std::mutex> lock(g_config_mutex);
     g_custom_driver_path = driver_path ? driver_path : "";
@@ -108,6 +121,44 @@ int hook_is_redirect_enabled() {
     return g_redirect_enabled;
 }
 
+// Resolve the patched counterpart of a library, when one exists.
+//
+// Preferred layout (deterministic, one patch set per library):
+//     <patch_dir>/<basename>_patched.so      e.g. libgame_engine.so -> libgame_engine_patched.so
+// Legacy layout used by the reference shells:
+//     <patch_dir>/<n>_patched.so              e.g. 1_patched.so, 2_patched.so, ...
+//
+// The substitution only happens for a library that really exists on disk
+// (in the requested path or in the runtime directory), so system libraries
+// (libvulkan.so, libc.so, ...) are never hijacked.
+static std::string resolve_patched_library(const char* requested, const std::string& patch_dir,
+                                           const std::string& runtime_dir) {
+    if (!requested || patch_dir.empty()) return "";
+
+    const char* slash = strrchr(requested, '/');
+    std::string base = slash ? std::string(slash + 1) : std::string(requested);
+    if (base.empty() || base == "." || base == "..") return "";
+
+    // The library must exist: either at the requested path or inside the runtime dir.
+    bool exists = access(requested, R_OK) == 0;
+    if (!exists && !runtime_dir.empty()) {
+        std::string in_runtime = runtime_dir + "/" + base;
+        exists = access(in_runtime.c_str(), R_OK) == 0;
+    }
+    if (!exists) return "";
+
+    std::string candidate = patch_dir + "/" + base + "_patched.so";
+    if (access(candidate.c_str(), R_OK) == 0) return candidate;
+
+    for (int n = 1; n <= 16; n++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d_patched.so", n);
+        candidate = patch_dir + "/" + buf;
+        if (access(candidate.c_str(), R_OK) == 0) return candidate;
+    }
+    return "";
+}
+
 // DLOPEN HOOK
 void* hook_impl_android_dlopen_ext(const char* filename, int flags, const void* extinfo, void* caller_addr) {
     init_real_symbols();
@@ -118,10 +169,12 @@ void* hook_impl_android_dlopen_ext(const char* filename, int flags, const void* 
 
     std::string custom_driver;
     std::string patch_dir;
+    std::string runtime_dir;
     {
         std::lock_guard<std::mutex> lock(g_config_mutex);
         custom_driver = g_custom_driver_path;
         patch_dir = g_patch_dir;
+        runtime_dir = g_runtime_dir;
     }
 
     // 1. Vulkan Driver interception
@@ -139,21 +192,19 @@ void* hook_impl_android_dlopen_ext(const char* filename, int flags, const void* 
         LOGI("loading default driver: %s", filename);
     }
 
-    // 2. Patched library interception (%s/%d_patched.so)
+    // 2. Patched library interception: the engine library is replaced by its
+    //    patched copy (same code, patches applied) when one is available.
     if (filename != nullptr && !patch_dir.empty()) {
-        char patched_candidate[512];
-        snprintf(patched_candidate, sizeof(patched_candidate), "%s/%d_patched.so", patch_dir.c_str(), 1);
-        if (access(patched_candidate, R_OK) == 0) {
-            // Check if current target library matches the engine
-            if (strstr(filename, "game") != nullptr || strstr(filename, "engine") != nullptr || strstr(filename, "d3d9") != nullptr) {
-                LOGI("Using patched engine library: %s instead of %s", patched_candidate, filename);
-                void* handle = dlopen(patched_candidate, flags);
-                if (handle) {
-                    LOGI("applied libfile_redirect_hook");
-                    LOGI("applied libgsl_alloc_hook");
-                    return handle;
-                }
+        std::string patched = resolve_patched_library(filename, patch_dir, runtime_dir);
+        if (!patched.empty()) {
+            LOGI("Using patched library: %s instead of %s", patched.c_str(), filename);
+            void* handle = dlopen(patched.c_str(), flags | RTLD_NOW);
+            if (handle) {
+                LOGI("applied libfile_redirect_hook");
+                LOGI("applied libgsl_alloc_hook");
+                return handle;
             }
+            LOGE("Failed to load patched library (%s): %s", patched.c_str(), dlerror());
         }
     }
 
@@ -272,15 +323,25 @@ int hook_impl_open(const char* pathname, int flags, mode_t mode) {
     return -1;
 }
 
-// GSL MEMORY ALLOC HOOK (64-bit safe allocator for Adreno/Mali GPU drivers)
+// GSL MEMORY ALLOC HOOK
+//
+// GSL is the allocator used by the classic EA/Black Box engine (the "Games for
+// Windows/Linux" allocator). The original build is 32-bit x86; on ARM64 the
+// allocator has to hand out 64-bit clean blocks, so we replace it with an
+// aligned implementation that keeps track of what it handed out.
 void* hook_impl_gsl_memory_alloc_pure(uint32_t size, uint32_t flags) {
     return hook_impl_gsl_memory_alloc_pure_64((uint64_t)size, (uint64_t)flags);
 }
 
 void* hook_impl_gsl_memory_alloc_pure_64(uint64_t size, uint64_t flags) {
-    if (size == 0) return nullptr;
+    (void)flags;  // the original allocator ignores its flag word for plain blocks
+    if (size == 0 || size > (uint64_t)SIZE_MAX) {
+        LOGE("gsl_memory_alloc_pure_64: invalid size %llu", (unsigned long long)size);
+        return nullptr;
+    }
 
-    // Align to 64 bytes to guarantee cache-line and SIMD safety
+    // 64-byte alignment: cache-line aligned and safe for NEON/SIMD loads, which
+    // is what the 32-bit original got for free on x86.
     void* ptr = nullptr;
     int res = posix_memalign(&ptr, 64, (size_t)size);
     if (res != 0 || !ptr) {
@@ -288,8 +349,9 @@ void* hook_impl_gsl_memory_alloc_pure_64(uint64_t size, uint64_t flags) {
         return nullptr;
     }
 
-    // Zero-initialize memory
-    memset(ptr, 0, (size_t)size);
+    // The memory is intentionally NOT zeroed: the original allocator returned
+    // uninitialised blocks and the engine relies on that (it memsets what it
+    // needs). Zeroing here would cost time on every allocation.
 
     {
         std::lock_guard<std::mutex> lock(g_alloc_mutex);
@@ -302,20 +364,11 @@ void* hook_impl_gsl_memory_alloc_pure_64(uint64_t size, uint64_t flags) {
 void hook_impl_gsl_memory_free_pure(void* ptr) {
     if (!ptr) return;
 
-    bool valid = false;
+    // Bookkeeping only: the pointer set is used by the diagnostics, the block
+    // itself is released with the platform allocator.
     {
         std::lock_guard<std::mutex> lock(g_alloc_mutex);
-        auto it = g_allocated_ptrs.find(ptr);
-        if (it != g_allocated_ptrs.end()) {
-            g_allocated_ptrs.erase(it);
-            valid = true;
-        }
+        g_allocated_ptrs.erase(ptr);
     }
-
-    if (valid) {
-        free(ptr);
-    } else {
-        // Pointer was not allocated through hook; safe fallback
-        free(ptr);
-    }
+    free(ptr);
 }

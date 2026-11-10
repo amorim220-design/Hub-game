@@ -15,4 +15,5 @@
 .cxx
 local.properties
 .env
+my-upload-key.jks
 debug.keystore

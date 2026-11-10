@@ -71,10 +71,25 @@ object DiagnosticsManager {
             put("tripleBuffering", options.tripleBuffering)
         }.toString(2)
 
+        // State of the native layer: which hook libraries were installed in the
+        // global scope, whether the DXVK bridge is active, which runtime is
+        // loaded. This is the first thing to look at when a game does not
+        // start: "hooksLoaded": false means the interposition is not installed.
+        val nativeState = try {
+            NativeBridge.hookStatus()
+        } catch (t: Throwable) {
+            "{\"error\":\"${t.javaClass.simpleName}: ${t.message}\"}"
+        }
+
         ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
             // 1. device_info.json
             zos.putNextEntry(ZipEntry("device_info.json"))
             zos.write(deviceInfo.toByteArray())
+            zos.closeEntry()
+
+            // 1b. native_state.json
+            zos.putNextEntry(ZipEntry("native_state.json"))
+            zos.write(nativeState.toByteArray())
             zos.closeEntry()
 
             // 2. options.json

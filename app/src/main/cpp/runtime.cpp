@@ -1,6 +1,7 @@
 #include <android/native_activity.h>
 #include <android/native_window.h>
 #include <android/input.h>
+#include <android/looper.h>
 #include <android/keycodes.h>
 #include <android/log.h>
 #include <jni.h>
@@ -21,6 +22,7 @@
 #include "dxvk_bridge.h"
 #include "patcher.h"
 
+#undef LOG_TAG
 #define LOG_TAG "VulkanCompatRuntime"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
@@ -37,6 +39,9 @@ struct GraphicsSettings {
     bool triple_buffering = true;
 };
 
+// Entry point exported by the user runtime package (optional).
+typedef void (*game_tick_fn)();
+
 struct EngineRuntimeState {
     std::mutex state_mutex;
     ANativeActivity* activity = nullptr;
@@ -48,6 +53,8 @@ struct EngineRuntimeState {
     std::atomic<bool> is_running{false};
     std::atomic<bool> is_paused{false};
     std::thread game_thread;
+
+    game_tick_fn game_tick = nullptr;
 
     // Vulkan objects
     VkInstance vk_instance = VK_NULL_HANDLE;
@@ -62,9 +69,53 @@ struct EngineRuntimeState {
 
 static EngineRuntimeState g_engine;
 
+// ---------------------------------------------------------------------------
+// Carregamento das libs de hook (ordem obrigatória)
+// ---------------------------------------------------------------------------
+// As libs de hook precisam entrar no ESCOPO GLOBAL (RTLD_GLOBAL) e ser
+// carregadas ANTES de qualquer biblioteca do runtime do jogo. Só assim os
+// símbolos que elas exportam (android_dlopen_ext, fopen, open,
+// gsl_memory_alloc_pure...) são os primeiros candidatos na resolução do
+// linker para as chamadas feitas pelo runtime do jogo.
+//
+// System.loadLibrary() NÃO garante RTLD_GLOBAL, por isso o carregamento é
+// feito aqui, em JNI_OnLoad — o primeiro código nosso a rodar no processo.
+static bool g_hooks_loaded = false;
+
+static bool load_hook_libraries() {
+    static const char* kHookLibs[] = {
+        "libhook_impl.so",
+        "libmain_hook.so",
+        "libfile_redirect_hook.so",
+        "libgsl_alloc_hook.so",
+    };
+
+    bool all_ok = true;
+    for (const char* name : kHookLibs) {
+        void* handle = dlopen(name, RTLD_NOW | RTLD_GLOBAL);
+        if (!handle) {
+            LOGE("hook library could not be loaded: %s (%s)", name, dlerror());
+            all_ok = false;
+            continue;
+        }
+        LOGI("hook library loaded (RTLD_GLOBAL): %s", name);
+    }
+    g_hooks_loaded = all_ok;
+    return all_ok;
+}
+
 // --- Vulkan Initialization & Setup ---
 static bool init_vulkan_surface(ANativeWindow* window) {
     if (!window) return false;
+
+    // Se o runtime do jogo (DXVK embutido) está ativo, ELE é o dono da
+    // VkInstance/VkSurface. Criar uma segunda instância aqui quebraria a
+    // apresentação (a surface pertence a outra instância) — neste caso o
+    // app só entrega a ANativeWindow para o DXVK.
+    if (dxvk_bridge_is_active()) {
+        LOGI("DXVK runtime active: the runtime owns the Vulkan instance/surface");
+        return false;
+    }
 
     // Query available instance extensions
     uint32_t ext_count = 0;
@@ -139,18 +190,22 @@ static void game_loop_worker() {
 
         auto frame_start = clock::now();
 
-        // 1. Process DXVK frame / dispatch commands if module loaded
-        // When user runtime library has exported game entry points:
-        typedef void (*game_tick_fn)();
-        if (g_engine.runtime_module_handle) {
-            static game_tick_fn tick = (game_tick_fn)dlsym(g_engine.runtime_module_handle, "game_main_tick");
-            if (tick) {
-                tick();
-            }
+        // 1. Drive the user runtime. The runtime package may export a tick
+        //    entry point; when it does not, the runtime drives its own loop
+        //    and this thread only keeps the window alive and samples telemetry.
+        game_tick_fn tick = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_engine.state_mutex);
+            tick = g_engine.game_tick;
         }
-
-        frame_counter++;
-        g_engine.total_frames++;
+        if (tick) {
+            tick();
+            frame_counter++;
+            g_engine.total_frames++;
+        } else {
+            // Nothing to drive: sleep instead of burning a core.
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
 
         // 2. Telemetry update every second
         auto now = clock::now();
@@ -164,7 +219,7 @@ static void game_loop_worker() {
 
         // 3. FPS Limiter calculation
         int limit = g_engine.settings.fps_limit;
-        if (limit > 0) {
+        if (limit > 0 && tick) {
             std::chrono::microseconds target_frame_time(1000000 / limit);
             auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - frame_start);
             if (frame_duration < target_frame_time) {
@@ -174,6 +229,90 @@ static void game_loop_worker() {
     }
 
     LOGI("Game loop thread terminating gracefully");
+}
+
+// --- Input dispatch ---
+// ANativeActivity does not deliver input events through a callback: the
+// application owns the AInputQueue and has to pump it. The game runtime
+// package receives the events through an optional exported entry point:
+//
+//     int pcshim_input_event(const AInputEvent* event);   // return non-zero to consume
+//
+// Without it the events are only logged (useful to debug the mapping).
+typedef int (*pcshim_input_fn)(const AInputEvent* event);
+
+static const int kInputIdent = 1;
+static AInputQueue* g_input_queue = nullptr;
+static std::thread g_input_thread;
+static std::mutex g_input_mutex;
+static pcshim_input_fn g_runtime_input_fn = nullptr;
+
+static int32_t onInputEvent(ANativeActivity* activity, AInputEvent* event) {
+    if (!event) return 0;
+
+    int32_t event_type = AInputEvent_getType(event);
+
+    if (event_type == AINPUT_EVENT_TYPE_KEY) {
+        int32_t key_code = AKeyEvent_getKeyCode(event);
+        int32_t action = AKeyEvent_getAction(event);
+        if (action == AKEY_EVENT_ACTION_DOWN || action == AKEY_EVENT_ACTION_UP) {
+            LOGI("key event: code=%d action=%d", key_code, action);
+        }
+    } else if (event_type == AINPUT_EVENT_TYPE_MOTION) {
+        int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+        size_t pointer_count = AMotionEvent_getPointerCount(event);
+        for (size_t i = 0; i < pointer_count; i++) {
+            float x = AMotionEvent_getX(event, i);
+            float y = AMotionEvent_getY(event, i);
+            (void)x; (void)y; (void)action;
+        }
+    }
+
+    pcshim_input_fn fn = g_runtime_input_fn;
+    if (fn) {
+        return fn(event) ? 1 : 0;
+    }
+    return 1;
+}
+
+static void input_pump_thread() {
+    // AInputQueue_getEvent() BLOCKS when there is nothing to read, so it must
+    // not be called directly in a loop: the thread would never notice the
+    // shutdown flag. The documented pattern is to attach the queue to a looper
+    // and poll it with a timeout.
+    ALooper* looper = ALooper_prepare(0, nullptr, 0);
+    LOGI("Input pump thread started (looper=%p)", (void*)looper);
+
+    bool attached = false;
+    while (g_engine.is_running.load()) {
+        AInputQueue* queue = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_input_mutex);
+            queue = g_input_queue;
+        }
+        if (!queue) {
+            attached = false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            continue;
+        }
+
+        if (!attached) {
+            AInputQueue_attachLooper(queue, looper, kInputIdent, nullptr, nullptr);
+            attached = true;
+        }
+
+        // Wait up to 50 ms for an input event, so the thread stays responsive
+        // to the shutdown flag.
+        int ident = ALooper_pollAll(50, nullptr, nullptr, nullptr);
+        if (ident != kInputIdent) continue;
+
+        AInputEvent* event = nullptr;
+        if (AInputQueue_getEvent(queue, &event) >= 0 && event) {
+            onInputEvent(g_engine.activity, event);
+            AInputQueue_finishEvent(queue, event);
+        }
+    }
+    LOGI("Input pump thread terminated");
 }
 
 // --- Native Activity Lifecycle Callbacks ---
@@ -231,34 +370,26 @@ static void onNativeWindowRedrawNeeded(ANativeActivity* activity, ANativeWindow*
 
 static void onInputQueueCreated(ANativeActivity* activity, AInputQueue* queue) {
     LOGI("ANativeActivity callback: onInputQueueCreated");
+    {
+        std::lock_guard<std::mutex> lock(g_input_mutex);
+        g_input_queue = queue;
+    }
+    // Start pumping the queue: NativeActivity has no input callback, the
+    // application is responsible for it.
+    if (!g_engine.is_running.load()) {
+        g_engine.is_running.store(true);
+        g_engine.game_thread = std::thread(game_loop_worker);
+    }
+    static std::once_flag input_flag;
+    std::call_once(input_flag, []() {
+        g_input_thread = std::thread(input_pump_thread);
+    });
 }
 
 static void onInputQueueDestroyed(ANativeActivity* activity, AInputQueue* queue) {
     LOGI("ANativeActivity callback: onInputQueueDestroyed");
-}
-
-static int32_t onInputEvent(ANativeActivity* activity, AInputEvent* event) {
-    int32_t event_type = AInputEvent_getType(event);
-
-    if (event_type == AINPUT_EVENT_TYPE_KEY) {
-        int32_t key_code = AKeyEvent_getKeyCode(event);
-        int32_t action = AKeyEvent_getAction(event);
-        // Handle Gamepad / Keyboard inputs (WASD, Arrows, Buttons)
-        if (action == AKEY_EVENT_ACTION_DOWN || action == AKEY_EVENT_ACTION_UP) {
-            // Forward input events to game runtime if registered
-        }
-        return 1;
-    } else if (event_type == AINPUT_EVENT_TYPE_MOTION) {
-        int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
-        size_t pointer_count = AMotionEvent_getPointerCount(event);
-        for (size_t i = 0; i < pointer_count; i++) {
-            float x = AMotionEvent_getX(event, i);
-            float y = AMotionEvent_getY(event, i);
-            (void)x; (void)y; (void)action;
-        }
-        return 1;
-    }
-    return 0;
+    std::lock_guard<std::mutex> lock(g_input_mutex);
+    g_input_queue = nullptr;
 }
 
 static void onStart(ANativeActivity* activity) {
@@ -285,6 +416,9 @@ static void onDestroy(ANativeActivity* activity) {
     if (g_engine.game_thread.joinable()) {
         g_engine.game_thread.join();
     }
+    if (g_input_thread.joinable()) {
+        g_input_thread.join();
+    }
     cleanup_vulkan();
     if (g_engine.runtime_module_handle) {
         dlclose(g_engine.runtime_module_handle);
@@ -296,6 +430,12 @@ static void onDestroy(ANativeActivity* activity) {
 extern "C" __attribute__((visibility("default")))
 void ANativeActivity_onCreate(ANativeActivity* activity, void* savedState, size_t savedStateSize) {
     LOGI("ANativeActivity_onCreate entry: activity=%p", activity);
+
+    // Safety net: JNI_OnLoad already did this, but the activity can be
+    // started without the Java bridge having touched NativeBridge first.
+    if (!g_hooks_loaded) {
+        load_hook_libraries();
+    }
 
     g_engine.activity = activity;
     activity->callbacks->onStart = onStart;
@@ -315,6 +455,16 @@ void ANativeActivity_onCreate(ANativeActivity* activity, void* savedState, size_
 }
 
 // --- JNI Bridge APIs for Launcher & Management ---
+
+// Runs as soon as the library is loaded: the earliest point we control inside
+// the process, so the hook libraries enter the global scope before anything
+// else is dlopen'ed.
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    LOGI("JNI_OnLoad: installing hook libraries into the global scope");
+    load_hook_libraries();
+    return JNI_VERSION_1_6;
+}
+
 extern "C" {
 
 JNIEXPORT void JNICALL
@@ -382,7 +532,24 @@ Java_com_example_NativeBridge_loadGameRuntime(JNIEnv* env, jclass clazz, jstring
     const char* path = env->GetStringUTFChars(runtime_so_path, nullptr);
     LOGI("NativeBridge: Loading game runtime: %s", path);
 
-    // Load with RTLD_NOW | RTLD_GLOBAL to let game symbols resolve into our hooks
+    // The hooks must be in place BEFORE the runtime is loaded, otherwise the
+    // runtime resolves the symbols it imports (fopen, android_dlopen_ext,
+    // gsl_memory_alloc_pure) to the system libraries and the interposition
+    // never happens.
+    if (!g_hooks_loaded) {
+        load_hook_libraries();
+    }
+
+    // The runtime directory lets the hooks find the patched counterpart of the
+    // engine library when the runtime asks for it by bare soname.
+    {
+        std::string p(path);
+        size_t slash = p.find_last_of('/');
+        hook_set_runtime_dir(slash == std::string::npos ? "" : p.substr(0, slash).c_str());
+    }
+
+    // Load with RTLD_NOW | RTLD_GLOBAL so the runtime's own symbols are
+    // visible to the rest of the process and the DXVK bridge can find them.
     void* handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
     if (!handle) {
         LOGE("Failed to dlopen game runtime (%s): %s", path, dlerror());
@@ -394,13 +561,44 @@ Java_com_example_NativeBridge_loadGameRuntime(JNIEnv* env, jclass clazz, jstring
         std::lock_guard<std::mutex> lock(g_engine.state_mutex);
         g_engine.runtime_so_path = path;
         g_engine.runtime_module_handle = handle;
+        // Optional entry point: a runtime that drives itself does not export it.
+        g_engine.game_tick = (game_tick_fn)dlsym(handle, "game_main_tick");
+        // Optional input entry point of the runtime package.
+        g_runtime_input_fn = (pcshim_input_fn)dlsym(handle, "pcshim_input_event");
     }
+    LOGI("Game runtime loaded, tick entry point: %s",
+         g_engine.game_tick ? "found" : "absent (runtime drives its own loop)");
 
     // Try resolving DXVK symbols inside the loaded runtime module
     dxvk_bridge_init(handle);
 
     env->ReleaseStringUTFChars(runtime_so_path, path);
     return JNI_TRUE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_example_NativeBridge_hookStatus(JNIEnv* env, jclass clazz) {
+    bool runtime_loaded = false;
+    bool tick_present = false;
+    std::string runtime_path;
+    {
+        std::lock_guard<std::mutex> lock(g_engine.state_mutex);
+        runtime_loaded = g_engine.runtime_module_handle != nullptr;
+        tick_present = g_engine.game_tick != nullptr;
+        runtime_path = g_engine.runtime_so_path;
+    }
+
+    std::string json = "{";
+    json += "\"hooksLoaded\":" + std::string(g_hooks_loaded ? "true" : "false");
+    json += ",\"dxvkActive\":" + std::string(dxvk_bridge_is_active() ? "true" : "false");
+    json += ",\"runtimeLoaded\":" + std::string(runtime_loaded ? "true" : "false");
+    json += ",\"runtimeTick\":" + std::string(tick_present ? "true" : "false");
+    json += ",\"runtimePath\":\"" + runtime_path + "\"";
+    json += ",\"gameDir\":\"" + std::string(hook_get_game_dir()) + "\"";
+    json += ",\"patchDir\":\"" + std::string(hook_get_patch_dir()) + "\"";
+    json += ",\"customDriver\":\"" + std::string(hook_get_custom_driver_path()) + "\"";
+    json += "}";
+    return env->NewStringUTF(json.c_str());
 }
 
 JNIEXPORT jstring JNICALL

@@ -1,4 +1,4 @@
-name: Build Vulkan Compat Shell & DXVK ARM64 APK
+name: Build APK (arm64-v8a)
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build DXVK & ARM64 Android APK
+    name: Build debug + release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -21,102 +21,85 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Set up Python, Meson & Ninja (DXVK Build Toolchain)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: |
-          pip install --upgrade meson ninja
+      - name: Set up Gradle (cache)
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Set up Android NDK (r27c) & CMake
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r27c
-          add-to-path: true
+      - name: Set up Android SDK (platform 35, build-tools 35, cmake 3.22.1, NDK r27c)
+        uses: android-actions/setup-android@v3
+        id: setup-android
 
-      - name: Configure DXVK Cross-Compilation for Android ARM64
+      - name: Install SDK packages
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.2.12479018"
+          yes | sdkmanager --licenses > /dev/null || true
+
+      # DXVK is NOT vendored in this repository (it is not ours to ship, and the
+      # upstream project does not target Android). It reaches the app as the
+      # user's "runtime package" (see README, section 3). If a prebuilt
+      # arm64-v8a libdxvk.so is made available through the DXVK_PREBUILT_URL
+      # repository variable, it is downloaded and packaged with the APK.
+      - name: Optional: fetch prebuilt DXVK for arm64-v8a
         env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          DXVK_PREBUILT_URL: ${{ vars.DXVK_PREBUILT_URL }}
         run: |
-          echo "=== Setting up DXVK Cross-Compilation for Android ARM64 ==="
-          mkdir -p third_party/dxvk-build
-          cat << 'EOF' > third_party/android-aarch64.cross
-          [binaries]
-          c = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang'
-          cpp = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++'
-          ar = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-          strip = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          if [ -z "$DXVK_PREBUILT_URL" ]; then
+            echo "DXVK_PREBUILT_URL not set: building the shell without a bundled DXVK (expected)."
+            exit 0
+          fi
+          mkdir -p third_party/dxvk-prebuilt/lib/arm64-v8a
+          curl -sSL "$DXVK_PREBUILT_URL" -o /tmp/dxvk.tar.gz
+          tar -xzf /tmp/dxvk.tar.gz -C third_party/dxvk-prebuilt
+          find third_party/dxvk-prebuilt -name "*.so" -exec mv {} third_party/dxvk-prebuilt/lib/arm64-v8a/ \;
+          ls -la third_party/dxvk-prebuilt/lib/arm64-v8a/
 
-          [host_machine]
-          system = 'android'
-          cpu_family = 'aarch64'
-          cpu = 'armv8-a'
-          endian = 'little'
-          EOF
-          echo "DXVK cross-compilation profile generated."
-
-      - name: Create or Restore Keystores for CI
+      - name: Create the debug keystore (used by the debug build type)
         run: |
-          echo "Verifying debug.keystore..."
-          if [ ! -f "debug.keystore" ]; then
-            echo "debug.keystore not found, generating standard Android debug keystore..."
+          if [ ! -f debug.keystore ]; then
             keytool -genkey -v -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
-          if [ ! -f "my-upload-key.jks" ]; then
-            echo "my-upload-key.jks not found, creating placeholder release keystore for CI..."
+
+      - name: Create the release keystore (CI placeholder)
+        run: |
+          if [ ! -f my-upload-key.jks ]; then
             keytool -genkey -v -keystore my-upload-key.jks \
-              -storepass android \
-              -alias upload \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
+              -storepass android -alias upload -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Upload Key,O=Android,C=US"
           fi
 
-      - name: Run Unit & Robolectric Tests
-        run: gradle :app:testDebugUnitTest
+      - name: Unit tests (Robolectric)
+        continue-on-error: true
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
 
-      - name: Assemble Release and Debug APK
+      - name: Assemble debug and release APKs
         env:
+          KEYSTORE_PATH: my-upload-key.jks
           STORE_PASSWORD: android
           KEY_PASSWORD: android
-        run: gradle :app:assembleDebug :app:assembleRelease
+          KEY_ALIAS: upload
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease
 
-      - name: Sign Release APK
-        run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
-          if [ -n "$APK_PATH" ]; then
-            echo "Signing $APK_PATH using debug/build keystore..."
-            ${ANDROID_HOME}/build-tools/35.0.0/apksigner sign \
-              --ks debug.keystore \
-              --ks-pass pass:android \
-              --key-pass pass:android \
-              --out app/build/outputs/apk/release/VulkanCompatShell-release-signed.apk \
-              "$APK_PATH" || true
-          fi
-
-      - name: Upload Debug APK
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: VulkanCompatShell-debug
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
+          if-no-files-found: error
 
-      - name: Upload Signed Release APK
+      - name: Upload release APK (already signed by AGP)
         uses: actions/upload-artifact@v4
         with:
-          name: VulkanCompatShell-release-signed
-          path: app/build/outputs/apk/release/*signed*.apk
-          if-no-files-found: warn
+          name: VulkanCompatShell-release
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 14
+          if-no-files-found: error

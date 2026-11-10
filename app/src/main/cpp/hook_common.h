@@ -62,6 +62,12 @@ extern "C" {
 void hook_set_game_dir(const char* dir);
 const char* hook_get_game_dir();
 
+// Diretório onde vive o pacote de runtime do usuário (o .so do motor). Usado
+// para resolver a contraparte patcheada de uma biblioteca e para validar
+// caminhos antes de dlopen.
+void hook_set_runtime_dir(const char* dir);
+const char* hook_get_runtime_dir();
+
 void hook_set_custom_driver_path(const char* driver_path);
 const char* hook_get_custom_driver_path();
 

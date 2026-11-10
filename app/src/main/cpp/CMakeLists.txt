@@ -36,6 +36,7 @@ target_link_libraries(main_hook
     ${LOG_LIB}
     ${DL_LIB}
 )
+target_link_options(main_hook PRIVATE "-Wl,--no-as-needed")
 set_target_properties(main_hook PROPERTIES
     OUTPUT_NAME "main_hook"
     CXX_VISIBILITY_PRESET default
@@ -76,6 +77,19 @@ add_library(compat_runtime SHARED
     dxvk_bridge.cpp
     patcher.cpp
 )
+
+# The hook libraries are NOT linked here on purpose.
+# libmain_hook.so / libfile_redirect_hook.so / libgsl_alloc_hook.so export the
+# symbols that must be interposed (android_dlopen_ext, fopen, open,
+# gsl_memory_alloc_pure...). For the interposition to work they have to be
+# loaded with RTLD_GLOBAL and BEFORE anything else loads them: in bionic, a
+# library that is already loaded is NOT promoted to the global scope by a
+# later dlopen(..., RTLD_GLOBAL). That load is done from JNI_OnLoad
+# (runtime.cpp -> load_hook_libraries), which is the first code of ours that
+# runs in the process.
+#
+# libhook_impl.so IS linked here: it holds the implementation (not the
+# interposition symbols) and compat_runtime calls into it directly.
 target_link_libraries(compat_runtime
     hook_impl
     ${ANDROID_LIB}
