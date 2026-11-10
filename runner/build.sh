@@ -95,15 +95,32 @@ chmod +x ./gradlew 2>/dev/null || true
     -Pandroid.injected.build.abi="$ANDROID_ABI" \
     assembleRelease
 
+# Diagnostico: o AGP pode injetar android:testOnly="true" no manifest (o
+# instalador normal recusa APKs de teste: "o pacote parece ser invalido").
+# aapt2 dump xmltree mostra os atributos reais de cada APK gerado.
+AAPT2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | tail -n 1)"
+log "APKs gerados e atributos do <application>:"
+while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    echo "  --- $candidate"
+    if [ -x "$AAPT2" ]; then
+        "$AAPT2" dump xmltree --file AndroidManifest.xml "$candidate" 2>/dev/null \
+            | grep -iE "testOnly|debuggable|extractNativeLibs" | sed 's/^/      /' || true
+    fi
+done < <(find "$APP_DIR" -type f -name '*.apk' 2>/dev/null | sort)
+
 # O modulo Android fica em <winlator-app>/app, entao os artefatos podem estar
 # em app/build/... ou app/app/build/... (depende da estrutura do upstream).
-log "procurando o APK gerado"
-find "$APP_DIR" -type f -name '*.apk' 2>/dev/null | sed 's/^/  /' || true
-APK="$(find "$APP_DIR" -type f -name '*.apk' -path '*outputs*' 2>/dev/null | head -n 1 || true)"
+# Preferimos o APK final (outputs/), que e o assinado e empacotado.
+APK=""
+for candidate in $(find "$APP_DIR" -type f -name '*.apk' -path '*outputs*' 2>/dev/null | sort); do
+    APK="$candidate"; break
+done
 if [ -z "$APK" ]; then
     APK="$(find "$APP_DIR" -type f -name '*.apk' 2>/dev/null | head -n 1 || true)"
 fi
 [ -n "$APK" ] || die "APK nao encontrado em $APP_DIR (outputs/apk/release)"
+log "APK escolhido: $APK"
 
 # --- 5. collect -------------------------------------------------------------
 mkdir -p "$DIST"
