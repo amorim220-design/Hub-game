@@ -68,25 +68,11 @@ if [ ! -d "$WORKDIR/.git" ]; then
     git -C "$WORKDIR" submodule update -q --init --recursive --depth 1
 fi
 APP_DIR="$WORKDIR/app"
-[ -f "$APP_DIR/build.gradle" ] || die "o submodule 'app' nao foi inicializado (rode: git submodule update --init --recursive)"
+[ -f "$APP_DIR/app/build.gradle" ] || [ -f "$APP_DIR/build.gradle" ] \
+    || die "o submodule 'app' nao foi inicializado (rode: git submodule update --init --recursive)"
 
-# --- 2. our patches on top --------------------------------------------------
-log "aplicando os patches do runner"
-sh "$HERE/patches/apply.sh" "$APP_DIR"
-
-# --- 3. build ---------------------------------------------------------------
-log "buildando o APK (abi $ANDROID_ABI)"
-cd "$APP_DIR"
-chmod +x ./gradlew 2>/dev/null || true
-./gradlew --no-daemon -Dorg.gradle.jvmargs="-Xmx4g" \
-    -Pandroid.injected.build.abi="$ANDROID_ABI" \
-    assembleRelease
-
-APK_UNSIGNED="$(find "$APP_DIR/build/outputs/apk/release" -name '*.apk' | head -n 1)"
-[ -n "$APK_UNSIGNED" ] || die "APK nao encontrado em build/outputs/apk/release"
-
-# --- 4. sign ----------------------------------------------------------------
-mkdir -p "$DIST" "$(dirname "$KEYSTORE")"
+# --- 2. keystore (o Gradle assina o release com ele) ----------------------
+mkdir -p "$(dirname "$KEYSTORE")"
 if [ ! -f "$KEYSTORE" ]; then
     log "gerando o keystore em $KEYSTORE"
     keytool -genkeypair -v -keystore "$KEYSTORE" \
@@ -94,22 +80,35 @@ if [ ! -f "$KEYSTORE" ]; then
         -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
         -dname "CN=Hub Game Runner,O=Hub-game,C=BR" >/dev/null
 fi
+export KEYSTORE_PATH="$KEYSTORE"
+export STORE_PASSWORD KEY_ALIAS KEY_PASSWORD
 
-APKSIGNER="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
-[ -x "$APKSIGNER" ] || APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -n 1)"
-[ -x "$APKSIGNER" ] || die "apksigner nao encontrado"
+# --- 3. our patches on top --------------------------------------------------
+log "aplicando os patches do runner"
+sh "$HERE/patches/apply.sh" "$APP_DIR"
 
+# --- 4. build ---------------------------------------------------------------
+log "buildando o APK (abi $ANDROID_ABI)"
+cd "$APP_DIR"
+chmod +x ./gradlew 2>/dev/null || true
+./gradlew --no-daemon -Dorg.gradle.jvmargs="-Xmx4g" \
+    -Pandroid.injected.build.abi="$ANDROID_ABI" \
+    assembleRelease
+
+APK="$(find "$APP_DIR/build/outputs/apk/release" -name '*.apk' | head -n 1)"
+[ -n "$APK" ] || die "APK nao encontrado em build/outputs/apk/release"
+
+# --- 5. collect -------------------------------------------------------------
+mkdir -p "$DIST"
 OUT_APK="$DIST/hubgame-runner-arm64.apk"
-log "assinando -> $OUT_APK"
-"$APKSIGNER" sign \
-    --ks "$KEYSTORE" \
-    --ks-key-alias "$KEY_ALIAS" \
-    --ks-pass "pass:$KEYSTORE_PASSWORD" \
-    --key-pass "pass:$KEY_PASSWORD" \
-    --out "$OUT_APK" \
-    "$APK_UNSIGNED"
+cp "$APK" "$OUT_APK"
 
-"$APKSIGNER" verify --print-certs "$OUT_APK" >/dev/null || log "aviso: nao foi possivel verificar o APK"
+APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -n 1)"
+if [ -x "$APKSIGNER" ]; then
+    "$APKSIGNER" verify --print-certs "$OUT_APK" >/dev/null 2>&1 \
+        && log "assinatura verificada" \
+        || log "aviso: o APK nao verificou (o Gradle assinou? conferir)"
+fi
 
 log "pronto: $OUT_APK"
 ls -la "$OUT_APK"

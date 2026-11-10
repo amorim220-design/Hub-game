@@ -28,7 +28,7 @@ jobs:
 
       - name: Build the runner APK
         env:
-          KEYSTORE_PATH: runner/keystore/runner.keystore
+          KEYSTORE_PATH: ${{ github.workspace }}/runner/keystore/runner.keystore
           STORE_PASSWORD: runner
           KEY_ALIAS: runner
           KEY_PASSWORD: runner
