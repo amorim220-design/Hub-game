@@ -275,12 +275,27 @@ static int32_t onInputEvent(ANativeActivity* activity, AInputEvent* event) {
     return 1;
 }
 
+static int input_callback(int ident, void* data, void* obj) {
+    (void)ident;
+    (void)obj;
+    AInputQueue* queue = (AInputQueue*)data;
+    if (!queue) return 0;
+
+    AInputEvent* event = nullptr;
+    if (AInputQueue_getEvent(queue, &event) >= 0 && event) {
+        onInputEvent(g_engine.activity, event);
+        AInputQueue_finishEvent(queue, event, 1);
+    }
+    return 1;
+}
+
 static void input_pump_thread() {
     // AInputQueue_getEvent() BLOCKS when there is nothing to read, so it must
     // not be called directly in a loop: the thread would never notice the
     // shutdown flag. The documented pattern is to attach the queue to a looper
-    // and poll it with a timeout.
-    ALooper* looper = ALooper_prepare(0, nullptr, 0);
+    // with a callback and poll the looper with a timeout: the callback runs
+    // exactly when an event is pending.
+    ALooper* looper = ALooper_prepare(0);
     LOGI("Input pump thread started (looper=%p)", (void*)looper);
 
     bool attached = false;
@@ -297,19 +312,14 @@ static void input_pump_thread() {
         }
 
         if (!attached) {
-            AInputQueue_attachLooper(queue, looper, kInputIdent, nullptr, nullptr);
+            AInputQueue_attachLooper(queue, looper, kInputIdent, input_callback, queue);
             attached = true;
         }
 
-        // Wait up to 50 ms for an input event, so the thread stays responsive
-        // to the shutdown flag.
-        int ident = ALooper_pollAll(50, nullptr, nullptr, nullptr);
-        if (ident != kInputIdent) continue;
-
-        AInputEvent* event = nullptr;
-        if (AInputQueue_getEvent(queue, &event) >= 0 && event) {
-            onInputEvent(g_engine.activity, event);
-            AInputQueue_finishEvent(queue, event);
+        // Wait up to 50 ms, so the thread stays responsive to the shutdown flag.
+        int ident = ALooper_pollOnce(50, nullptr, nullptr, nullptr);
+        if (ident < 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
         }
     }
     LOGI("Input pump thread terminated");
