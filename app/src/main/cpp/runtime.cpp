@@ -21,6 +21,7 @@
 #include "hook_impl.h"
 #include "dxvk_bridge.h"
 #include "patcher.h"
+#include "process_runtime.h"
 
 #undef LOG_TAG
 #define LOG_TAG "VulkanCompatRuntime"
@@ -68,6 +69,57 @@ struct EngineRuntimeState {
 };
 
 static EngineRuntimeState g_engine;
+
+// ---------------------------------------------------------------------------
+// Runtime em processo separado (modelo B)
+// ---------------------------------------------------------------------------
+static ProcessRuntime g_process_runtime;
+static std::atomic<bool> g_process_mode{false};
+static std::atomic<bool> g_frame_pending{false};
+
+// ---------------------------------------------------------------------------
+// Apresentação do framebuffer compartilhado (modo processo)
+// ---------------------------------------------------------------------------
+// No modo processo não há Vulkan: o guest desenha num framebuffer de CPU e o
+// app publica na surface com ANativeWindow_lock/unlockAndPost. É o caminho
+// simples e previsível; o modo nativo (DXVK no processo) continua usando a
+// surface Vulkan.
+static bool present_framebuffer(ANativeWindow* window, const uint8_t* fb,
+                                uint32_t srcWidth, uint32_t srcHeight) {
+    if (!window || !fb || srcWidth == 0 || srcHeight == 0) return false;
+
+    ANativeWindow_Buffer buffer;
+    if (ANativeWindow_lock(window, &buffer, nullptr) != 0) {
+        LOGW("ANativeWindow_lock falhou");
+        return false;
+    }
+
+    uint8_t* dst = static_cast<uint8_t*>(buffer.bits);
+    const size_t dstStride = (size_t)buffer.stride * 4;
+
+    if ((uint32_t)buffer.width == srcWidth && (uint32_t)buffer.height == srcHeight) {
+        for (int y = 0; y < (int)srcHeight; y++) {
+            memcpy(dst + (size_t)y * dstStride, fb + (size_t)y * srcWidth * 4, (size_t)srcWidth * 4);
+        }
+    } else {
+        // Escala nearest-neighbour: a resolução interna pode ser menor que a
+        // janela (é o modo "resolução interna 720p" da interface).
+        for (int y = 0; y < buffer.height; y++) {
+            uint32_t sy = (uint32_t)((int64_t)y * srcHeight / buffer.height);
+            if (sy >= srcHeight) sy = srcHeight - 1;
+            const uint8_t* srcRow = fb + (size_t)sy * srcWidth * 4;
+            uint8_t* dstRow = dst + (size_t)y * dstStride;
+            for (int x = 0; x < buffer.width; x++) {
+                uint32_t sx = (uint32_t)((int64_t)x * srcWidth / buffer.width);
+                if (sx >= srcWidth) sx = srcWidth - 1;
+                memcpy(dstRow + (size_t)x * 4, srcRow + (size_t)sx * 4, 4);
+            }
+        }
+    }
+
+    ANativeWindow_unlockAndPost(window);
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // Carregamento das libs de hook (ordem obrigatória)
@@ -190,21 +242,47 @@ static void game_loop_worker() {
 
         auto frame_start = clock::now();
 
-        // 1. Drive the user runtime. The runtime package may export a tick
-        //    entry point; when it does not, the runtime drives its own loop
-        //    and this thread only keeps the window alive and samples telemetry.
         game_tick_fn tick = nullptr;
-        {
-            std::lock_guard<std::mutex> lock(g_engine.state_mutex);
-            tick = g_engine.game_tick;
-        }
-        if (tick) {
-            tick();
-            frame_counter++;
-            g_engine.total_frames++;
+
+        // 1a. Modo processo: o guest desenha no framebuffer compartilhado e
+        //     avisa pelo socket. O app publica o quadro na surface.
+        if (g_process_mode.load()) {
+            char message = 0;
+            while (g_process_runtime.pollGuestMessage(message)) {
+                if (message == 'F') {
+                    g_frame_pending.store(true);
+                }
+            }
+            if (g_frame_pending.exchange(false)) {
+                ANativeWindow* window = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(g_engine.state_mutex);
+                    window = g_engine.window;
+                }
+                present_framebuffer(window,
+                                   g_process_runtime.framebuffer(),
+                                   g_process_runtime.framebufferWidth(),
+                                   g_process_runtime.framebufferHeight());
+                frame_counter++;
+                g_engine.total_frames++;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
         } else {
-            // Nothing to drive: sleep instead of burning a core.
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // 1b. Modo nativo: dirige o runtime carregado no próprio processo.
+            //     O runtime pode não exportar um tick: nesse caso ele conduz o
+            //     próprio loop e aqui só mantemos a janela viva.
+            {
+                std::lock_guard<std::mutex> lock(g_engine.state_mutex);
+                tick = g_engine.game_tick;
+            }
+            if (tick) {
+                tick();
+                frame_counter++;
+                g_engine.total_frames++;
+            } else {
+                // Nada a dirigir: dormir em vez de queimar um núcleo.
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
 
         // 2. Telemetry update every second
@@ -272,6 +350,29 @@ static int32_t onInputEvent(ANativeActivity* activity, AInputEvent* event) {
     if (fn) {
         return fn(event) ? 1 : 0;
     }
+
+    // Modo processo: o evento vai para o guest pelo socket.
+    if (g_process_mode.load()) {
+        PcshimInputEvent out;
+        out.ts = (int64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count() / 1000000;
+        if (event_type == AINPUT_EVENT_TYPE_KEY) {
+            out.type = (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN)
+                           ? PCSHIM_INPUT_KEY_DOWN
+                           : PCSHIM_INPUT_KEY_UP;
+            out.action = (uint32_t)AKeyEvent_getAction(event);
+            out.a = AKeyEvent_getKeyCode(event);
+        } else if (event_type == AINPUT_EVENT_TYPE_MOTION) {
+            out.type = PCSHIM_INPUT_MOTION;
+            out.action = (uint32_t)(AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK);
+            out.a = 0;
+            out.b = (int32_t)(AMotionEvent_getX(event, 0) * 65536.0f);
+            out.c = (int32_t)(AMotionEvent_getY(event, 0) * 65536.0f);
+        } else {
+            out.type = PCSHIM_INPUT_FOCUS;
+        }
+        g_process_runtime.sendInput(out);
+    }
+
     return 1;
 }
 
@@ -338,16 +439,23 @@ static void onNativeWindowCreated(ANativeActivity* activity, ANativeWindow* wind
     // Set buffer geometry according to chosen render resolution
     uint32_t target_w = g_engine.settings.render_width;
     uint32_t target_h = g_engine.settings.render_height;
-    if (target_w > 0 && target_h > 0) {
+
+    // No modo processo o guest entrega um framebuffer de CPU: a surface é
+    // usada só para publicar pixels, então não há surface Vulkan a criar.
+    if (g_process_mode.load()) {
         ANativeWindow_setBuffersGeometry(window, target_w, target_h, WINDOW_FORMAT_RGBA_8888);
+    } else {
+        if (target_w > 0 && target_h > 0) {
+            ANativeWindow_setBuffersGeometry(window, target_w, target_h, WINDOW_FORMAT_RGBA_8888);
+        }
+
+        // Forward to DXVK bridge
+        dxvk_bridge_set_window(window);
+        dxvk_bridge_set_render_size(target_w, target_h);
+
+        // Initialize Vulkan surface
+        init_vulkan_surface(window);
     }
-
-    // Forward to DXVK bridge
-    dxvk_bridge_set_window(window);
-    dxvk_bridge_set_render_size(target_w, target_h);
-
-    // Initialize Vulkan surface
-    init_vulkan_surface(window);
 
     // Start game thread if not running
     if (!g_engine.is_running.load()) {
@@ -428,6 +536,10 @@ static void onDestroy(ANativeActivity* activity) {
     }
     if (g_input_thread.joinable()) {
         g_input_thread.join();
+    }
+    if (g_process_mode.load()) {
+        g_process_runtime.stop();
+        g_process_mode.store(false);
     }
     cleanup_vulkan();
     if (g_engine.runtime_module_handle) {
@@ -587,6 +699,100 @@ Java_com_example_NativeBridge_loadGameRuntime(JNIEnv* env, jclass clazz, jstring
 }
 
 JNIEXPORT jstring JNICALL
+Java_com_example_NativeBridge_launchProcessRuntime(
+    JNIEnv* env, jclass clazz,
+    jstring runtime_dir, jstring launcher_rel, jstring prefix_rel, jstring exe_rel,
+    jstring launcher_args, jstring env_pairs, jint width, jint height) {
+
+    if (!runtime_dir || !launcher_rel || !prefix_rel || !exe_rel) return nullptr;
+
+    const char* c_runtime = env->GetStringUTFChars(runtime_dir, nullptr);
+    const char* c_launcher = env->GetStringUTFChars(launcher_rel, nullptr);
+    const char* c_prefix = env->GetStringUTFChars(prefix_rel, nullptr);
+    const char* c_exe = env->GetStringUTFChars(exe_rel, nullptr);
+
+    std::string runtimeDir(c_runtime);
+    std::string prefixDir = runtimeDir + "/" + std::string(c_prefix);
+    std::string launcherPath = runtimeDir + "/" + std::string(c_launcher);
+
+    // O executável do jogo vive no drive C do prefixo do Wine.
+    std::string exePath = std::string(c_exe);
+    if (exePath.rfind("drive_c/", 0) != 0) {
+        exePath = prefixDir + "/drive_c/" + exePath;
+    } else {
+        exePath = prefixDir + "/" + exePath;
+    }
+
+    ProcessRuntimeConfig config;
+    config.launcher = launcherPath;
+    config.workingDir = prefixDir;
+    config.width = width > 0 ? width : 1280;
+    config.height = height > 0 ? height : 720;
+
+    // Argumentos do lançador (separados por ';') e o executável do jogo por
+    // último: "box64 wine64 /caminho/Game.exe".
+    if (launcher_args) {
+        const char* c_args = env->GetStringUTFChars(launcher_args, nullptr);
+        std::string args(c_args);
+        env->ReleaseStringUTFChars(launcher_args, c_args);
+        size_t start = 0;
+        while (start <= args.size()) {
+            size_t sep = args.find(';', start);
+            std::string piece = args.substr(start, sep == std::string::npos ? std::string::npos : sep - start);
+            if (!piece.empty()) config.args.push_back(piece);
+            if (sep == std::string::npos) break;
+            start = sep + 1;
+        }
+    }
+    config.args.push_back(exePath);
+
+    // Variáveis de ambiente do pacote ("KEY=VAL;KEY=VAL").
+    if (env_pairs) {
+        const char* c_env = env->GetStringUTFChars(env_pairs, nullptr);
+        std::string pairs(c_env);
+        env->ReleaseStringUTFChars(env_pairs, c_env);
+        size_t start = 0;
+        while (start <= pairs.size()) {
+            size_t sep = pairs.find(';', start);
+            std::string piece = pairs.substr(start, sep == std::string::npos ? std::string::npos : sep - start);
+            size_t eq = piece.find('=');
+            if (eq != std::string::npos && eq > 0) {
+                config.env[piece.substr(0, eq)] = piece.substr(eq + 1);
+            }
+            if (sep == std::string::npos) break;
+            start = sep + 1;
+        }
+    }
+    // O prefixo do Wine e as DLLs do DXVK ficam sempre acessíveis.
+    config.env["WINEPREFIX"] = prefixDir;
+    if (config.env.find("WINEDLLPATH") == config.env.end()) {
+        config.env["WINEDLLPATH"] = prefixDir + "/drive_c/windows/system32:" +
+                                    prefixDir + "/drive_c/windows/syswow64";
+    }
+    config.env["PCSHIM_EXE"] = exePath;
+
+    env->ReleaseStringUTFChars(runtime_dir, c_runtime);
+    env->ReleaseStringUTFChars(launcher_rel, c_launcher);
+    env->ReleaseStringUTFChars(prefix_rel, c_prefix);
+    env->ReleaseStringUTFChars(exe_rel, c_exe);
+
+    std::string error;
+    if (!g_process_runtime.start(config, error)) {
+        LOGE("Falha ao iniciar o runtime em processo: %s", error.c_str());
+        return env->NewStringUTF(error.c_str());
+    }
+
+    g_process_mode.store(true);
+    {
+        std::lock_guard<std::mutex> lock(g_engine.state_mutex);
+        g_engine.runtime_so_path = launcherPath;
+    }
+    LOGI("Runtime em processo iniciado: %s (prefixo=%s, exe=%s)", launcherPath.c_str(),
+         prefixDir.c_str(), exePath.c_str());
+    return env->NewStringUTF("");
+}
+
+JNIEXPORT jstring JNICALL
 Java_com_example_NativeBridge_hookStatus(JNIEnv* env, jclass clazz) {
     bool runtime_loaded = false;
     bool tick_present = false;
@@ -603,6 +809,9 @@ Java_com_example_NativeBridge_hookStatus(JNIEnv* env, jclass clazz) {
     json += ",\"dxvkActive\":" + std::string(dxvk_bridge_is_active() ? "true" : "false");
     json += ",\"runtimeLoaded\":" + std::string(runtime_loaded ? "true" : "false");
     json += ",\"runtimeTick\":" + std::string(tick_present ? "true" : "false");
+    json += ",\"processMode\":" + std::string(g_process_mode.load() ? "true" : "false");
+    json += ",\"guestReady\":" + std::string(g_process_runtime.isGuestReady() ? "true" : "false");
+    json += ",\"childPid\":" + std::to_string(g_process_runtime.childPid());
     json += ",\"runtimePath\":\"" + runtime_path + "\"";
     json += ",\"gameDir\":\"" + std::string(hook_get_game_dir()) + "\"";
     json += ",\"patchDir\":\"" + std::string(hook_get_patch_dir()) + "\"";

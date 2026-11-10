@@ -16,8 +16,12 @@ data class RuntimePackage(
     val mainLibraryName: String,
     val installDir: File,
     val mainLibraryFile: File,
-    val installedAtTimestamp: Long
-)
+    val installedAtTimestamp: Long,
+    val spec: RuntimeSpec = RuntimeSpec.Native(mainLibraryName)
+) {
+    /** Tipo do pacote: "native" (modelo A) ou "wine" (modelo B). */
+    val type: String get() = spec.type
+}
 
 object PackageInstaller {
     private const val TAG = "VulkanCompatInstaller"
@@ -148,26 +152,48 @@ object PackageInstaller {
             var mainLibName: String? = null
 
             val metaJsonFile = File(tempExtractDir, "meta.json")
-            if (metaJsonFile.exists()) {
-                val jsonStr = metaJsonFile.readText()
-                val json = JSONObject(jsonStr)
-                packageName = json.optString("name", packageName)
-                packageVersion = json.optString("version", packageVersion)
-                packageAuthor = json.optString("author", packageAuthor)
-                mainLibName = if (json.has("mainLibrary")) json.getString("mainLibrary") else null
+            if (!metaJsonFile.exists()) {
+                throw IllegalArgumentException(
+                    "O pacote não tem meta.json. Ele é obrigatório: é ele que descreve o runtime."
+                )
+            }
+            val json = JSONObject(metaJsonFile.readText())
+            packageName = json.optString("name", packageName)
+            packageVersion = json.optString("version", packageVersion)
+            packageAuthor = json.optString("author", packageAuthor)
+            mainLibName = if (json.has("mainLibrary")) json.getString("mainLibrary") else null
+
+            // The package type decides how the game is started:
+            //   native -> a .so ARM64 loaded in the game process (model A)
+            //   wine   -> a separate process (translator + Wine + game) (model B)
+            val spec = RuntimeSpec.fromJson(json)
+
+            val problems = RuntimeSpec.validateFiles(spec, tempExtractDir)
+            if (problems.isNotEmpty()) {
+                throw IllegalArgumentException(
+                    "Pacote inválido:\n- " + problems.joinToString("\n- ")
+                )
             }
 
             // Find candidates .so files
             val soFiles = tempExtractDir.walkTopDown().filter { it.isFile && it.extension == "so" }.toList()
-            if (soFiles.isEmpty()) {
-                throw IllegalArgumentException("O pacote ZIP não contém nenhuma biblioteca compartilhada (.so).")
-            }
 
-            val targetLib = if (mainLibName != null) {
-                File(tempExtractDir, mainLibName).takeIf { it.exists() }
-                    ?: soFiles.first()
-            } else {
-                soFiles.maxByOrNull { it.length() } ?: soFiles.first()
+            val targetLib: File = when (spec) {
+                is RuntimeSpec.Native -> {
+                    val lib = File(tempExtractDir, spec.mainLibrary)
+                    if (lib.exists()) {
+                        lib
+                    } else if (soFiles.isNotEmpty()) {
+                        soFiles.maxByOrNull { it.length() } ?: soFiles.first()
+                    } else {
+                        throw IllegalArgumentException("O pacote ZIP não contém nenhuma biblioteca compartilhada (.so).")
+                    }
+                }
+
+                is RuntimeSpec.Wine -> {
+                    // No modelo Wine the entry point is an executable, not a library.
+                    File(tempExtractDir, spec.launcher)
+                }
             }
 
             // Enforce ARM64 ELF verification
@@ -185,21 +211,31 @@ object PackageInstaller {
                 tempExtractDir.deleteRecursively()
             }
 
-            val installedLibFile = File(finalDir, targetLib.name)
+            // The entry point keeps its path inside the package (e.g. "bin/box64").
+            val installedLibRel = try {
+                targetLib.relativeTo(tempExtractDir).path
+            } catch (e: Exception) {
+                targetLib.name
+            }
+            val installedLibFile = File(finalDir, installedLibRel)
             installedLibFile.setExecutable(true, false)
 
-            // Write metadata
+            // Write metadata (the spec is preserved so the launcher knows how
+            // to start the game from this package).
             val installedMeta = JSONObject().apply {
                 put("id", sanitizedId)
                 put("name", packageName)
                 put("version", packageVersion)
                 put("author", packageAuthor)
-                put("mainLibrary", installedLibFile.name)
                 put("installedAt", System.currentTimeMillis())
+                put("mainLibrary", installedLibRel)
+                put("type", spec.type)
+                val specJson = RuntimeSpec.toJson(spec)
+                specJson.keys().forEach { key -> if (key != "type") put(key, specJson.get(key)) }
             }
             File(finalDir, "meta.json").writeText(installedMeta.toString(2))
 
-            Log.i(TAG, "Pacote de runtime instalado com sucesso em: ${finalDir.absolutePath}")
+            Log.i(TAG, "Pacote de runtime (${spec.type}) instalado com sucesso em: ${finalDir.absolutePath}")
 
             return RuntimePackage(
                 id = sanitizedId,
@@ -209,7 +245,8 @@ object PackageInstaller {
                 mainLibraryName = installedLibFile.name,
                 installDir = finalDir,
                 mainLibraryFile = installedLibFile,
-                installedAtTimestamp = System.currentTimeMillis()
+                installedAtTimestamp = System.currentTimeMillis(),
+                spec = spec
             )
         } finally {
             if (tempExtractDir.exists()) {
@@ -230,6 +267,7 @@ object PackageInstaller {
                 val metaFile = File(dir, "meta.json")
                 if (metaFile.exists()) {
                     val json = JSONObject(metaFile.readText())
+                    val spec = RuntimeSpec.fromJson(json)
                     val mainLib = json.optString("mainLibrary")
                     val libFile = File(dir, mainLib)
                     if (libFile.exists()) {
@@ -241,7 +279,8 @@ object PackageInstaller {
                             mainLibraryName = mainLib,
                             installDir = dir,
                             mainLibraryFile = libFile,
-                            installedAtTimestamp = json.optLong("installedAt", 0L)
+                            installedAtTimestamp = json.optLong("installedAt", 0L),
+                            spec = spec
                         )
                     } else null
                 } else {
@@ -255,7 +294,8 @@ object PackageInstaller {
                             mainLibraryName = so.name,
                             installDir = dir,
                             mainLibraryFile = so,
-                            installedAtTimestamp = dir.lastModified()
+                            installedAtTimestamp = dir.lastModified(),
+                            spec = RuntimeSpec.Native(so.name)
                         )
                     } else null
                 }

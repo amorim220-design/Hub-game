@@ -99,20 +99,38 @@ diagnóstico (`native_state.json`).
 
 ## 3. Pacote de runtime (o que o usuário traz)
 
-ZIP com `meta.json` e a biblioteca do motor:
+O app **não traz o jogo**. O pacote de runtime é o que sabe rodá-lo, e há dois
+tipos (detalhes completos em [`docs/runtime-package.md`](docs/runtime-package.md)):
+
+**Tipo `native` (modelo A)** — o pacote traz uma `.so` ARM64 que já é o motor
+recompilado, com o DXVK embutido:
 
 ```
-meu_runtime_arm64.zip
+meu_runtime.zip
 ├── meta.json
-└── libgame_engine.so      (ELF 64-bit, e_machine = 0xB7 / AArch64)
+└── libgame_engine.so     (ELF 64-bit, e_machine = 0xB7 / AArch64)
 ```
+
+Contrato opcional com o runtime:
+
+```c
+void game_main_tick(void);                       // chamado pelo loop do app
+int  pcshim_input_event(const AInputEvent* ev);  // recebe teclado/toque/gamepad
+```
+
+**Tipo `wine` (modelo B)** — o pacote traz um prefixo do Wine + tradutor de CPU
+(Box64/FEX) + DXVK, e o app o executa como **processo separado**, trocando
+frames por um framebuffer compartilhado e input por um socket UNIX:
 
 ```json
 {
-  "name": "Meu runtime D3D9",
-  "version": "1.0.0",
-  "author": "comunidade",
-  "mainLibrary": "libgame_engine.so"
+  "type": "wine",
+  "prefix": "prefix",
+  "exe": "drive_c/jogo/Game.exe",
+  "launcher": "bin/box64",
+  "launcherArgs": ["wine64"],
+  "displayWidth": 1280,
+  "displayHeight": 720
 }
 ```
 
@@ -124,19 +142,15 @@ Validações do instalador (`PackageInstaller.kt`):
 3. **Arquitetura** — cabeçalho ELF, classe 64-bit, `e_machine = 0xB7`.
    Executáveis PE (`MZ`) e binários x86/x86-64 de PC são **rejeitados com
    mensagem explícita**: o app não emula CPU x86.
+4. **Coerência do pacote** — prefixo, executável e lançador precisam existir
+   dentro do pacote (`RuntimeSpec.validateFiles`).
 
-### Contrato opcional com o runtime
+### Pacote de referência (para testar sem Wine)
 
-O runtime pode exportar dois pontos de entrada (ambos opcionais):
-
-```c
-void game_main_tick(void);                        // chamado pelo loop do app
-int  pcshim_input_event(const AInputEvent* ev);   // recebe teclado/toque/gamepad
+```bash
+./tools/guest/build.sh        # compila o guest de exemplo (precisa do NDK)
+./tools/guest/make-package.sh # gera o .zip para instalar no app
 ```
-
-Sem `game_main_tick`, o runtime conduz o próprio loop e o app só mantém a
-janela viva e mede FPS. Sem `pcshim_input_event`, os eventos são apenas
-registrados no log.
 
 ---
 
@@ -251,10 +265,13 @@ O APK release já sai assinado pelo AGP (não há passo extra de `apksigner`).
 
 ## 8. Roteiro do que ainda falta
 
+- [ ] Display acelerado para o modelo B: hoje o guest entrega um framebuffer de
+      CPU. Com DXVK (Vulkan) o caminho certo é exportar uma `VkImage` do host
+      (`VK_KHR_external_memory_fd`) em vez de copiar pixels.
+- [ ] `pcshim_input_event` com mapeamento completo (teclado, mouse, gamepad).
 - [ ] Injeção de `DT_NEEDED` no ELF do runtime, para interposição garantida de
       `fopen`/`open` (hoje ela depende da ordem de resolução de símbolos).
-- [ ] `pcshim_input_event` com mapeamento completo (teclado, mouse, gamepad).
 - [ ] Patch set pronto para o `WidescreenFix.dat` no formato do motor EA.
-- [ ] Pacote de runtime de referência, com DXVK para arm64 empacotado.
+- [ ] Pacote de runtime de referência com DXVK/VKWIND empacotado.
 - [ ] Teste em dispositivo real (o CI só compila; não há emulador Vulkan com
       surface Android no runner).

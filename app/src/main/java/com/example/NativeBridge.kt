@@ -70,6 +70,27 @@ object NativeBridge {
     external fun loadGameRuntime(runtimeSoPath: String): Boolean
 
     /**
+     * Starts a runtime in a separate process (model B: CPU translator + Wine +
+     * game). The launcher is executed as
+     *     <launcher> <launcherArgs...> <exe>
+     * and the guest receives the socket path and the shared framebuffer through
+     * the PCSHIM_* environment variables.
+     *
+     * @return an empty string on success, the error description on failure.
+     */
+    @JvmStatic
+    external fun launchProcessRuntime(
+        runtimeDir: String,
+        launcherRel: String,
+        prefixRel: String,
+        exeRel: String,
+        launcherArgs: String,
+        envPairs: String,
+        width: Int,
+        height: Int
+    ): String
+
+    /**
      * JSON with the state of the native layer: which hook libraries were
      * installed, whether the DXVK bridge is active, the loaded runtime, and the
      * configured directories. Used by the diagnostics screen.

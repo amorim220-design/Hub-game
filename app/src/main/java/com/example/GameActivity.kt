@@ -34,18 +34,56 @@ class GameActivity : NativeActivity() {
 
         // 3. Load user-selected runtime package if provided
         val runtimePath = intent.getStringExtra(EXTRA_RUNTIME_PATH)
-            ?: options.activeRuntimeId.takeIf { it.isNotEmpty() }?.let { id ->
-                PackageInstaller.listInstalledPackages(this).find { it.id == id }?.mainLibraryFile?.absolutePath
+        val runtimeId = options.activeRuntimeId.takeIf { it.isNotEmpty() }
+        val package = if (!runtimePath.isNullOrEmpty()) {
+            null
+        } else if (runtimeId != null) {
+            PackageInstaller.listInstalledPackages(this).find { it.id == runtimeId }
+        } else {
+            null
+        }
+
+        val spec = package?.spec
+        when {
+            spec is RuntimeSpec.Wine -> {
+                // Model B: the runtime runs in its own process (translator + Wine + game).
+                val env = spec.env.entries.joinToString(";") { "${it.key}=${it.value}" }
+                val error = NativeBridge.launchProcessRuntime(
+                    package.installDir.absolutePath,
+                    spec.launcher,
+                    spec.prefixDir,
+                    spec.exe,
+                    spec.launcherArgs.joinToString(";"),
+                    env,
+                    spec.displayWidth,
+                    spec.displayHeight
+                )
+                if (error.isNotEmpty()) {
+                    Log.e(TAG, "Falha ao iniciar o runtime em processo: $error")
+                } else {
+                    Log.i(TAG, "Runtime em processo iniciado: ${spec.launcher}")
+                }
             }
 
-        if (!runtimePath.isNullOrEmpty()) {
-            Log.i(TAG, "Loading game runtime module: $runtimePath")
-            val success = NativeBridge.loadGameRuntime(runtimePath)
-            if (!success) {
-                Log.e(TAG, "Failed to load game runtime module!")
+            !runtimePath.isNullOrEmpty() -> {
+                Log.i(TAG, "Loading game runtime module: $runtimePath")
+                val success = NativeBridge.loadGameRuntime(runtimePath)
+                if (!success) {
+                    Log.e(TAG, "Failed to load game runtime module!")
+                }
             }
-        } else {
-            Log.w(TAG, "No custom game runtime specified; starting native Vulkan presentation loop.")
+
+            spec is RuntimeSpec.Native -> {
+                Log.i(TAG, "Loading game runtime module: ${spec.mainLibrary}")
+                val success = NativeBridge.loadGameRuntime(package.mainLibraryFile.absolutePath)
+                if (!success) {
+                    Log.e(TAG, "Failed to load game runtime module!")
+                }
+            }
+
+            else -> {
+                Log.w(TAG, "No custom game runtime specified; starting native Vulkan presentation loop.")
+            }
         }
 
         // 4. Delegate to NativeActivity native lifecycle

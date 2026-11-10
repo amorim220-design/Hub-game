@@ -76,6 +76,7 @@ add_library(compat_runtime SHARED
     runtime.cpp
     dxvk_bridge.cpp
     patcher.cpp
+    process_runtime.cpp
 )
 
 # The hook libraries are NOT linked here on purpose.
