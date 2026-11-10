@@ -25,19 +25,23 @@ jobs:
       - name: Set up Gradle (cache)
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Set up Android SDK (platform 35, build-tools 35, cmake 3.22.1, NDK r27c)
-        uses: android-actions/setup-android@v3
-        id: setup-android
+      - name: Set up Android NDK (r27c) for the CMake build
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: true
 
-      - name: Install SDK packages
+      - name: Install the SDK packages the build needs
         run: |
-          sdkmanager --install \
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
-            "cmake;3.22.1" \
-            "ndk;27.2.12479018"
-          yes | sdkmanager --licenses > /dev/null || true
+            "cmake;3.22.1"
 
       # DXVK is NOT vendored in this repository (it is not ours to ship, and the
       # upstream project does not target Android). It reaches the app as the
