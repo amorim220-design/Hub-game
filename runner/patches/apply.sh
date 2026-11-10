@@ -65,3 +65,18 @@ android {
 EOF
 
 echo "patch de assinatura aplicado em $MODULE_GRADLE"
+
+# --- android.injected.testOnly ----------------------------------------------
+# O AGP marca a variante como "de teste" e injeta android:testOnly="true" no
+# manifest. O instalador normal do Android recusa APK de teste
+# (INSTALL_FAILED_TEST_ONLY -> "o pacote parece ser invalido"), so o build
+# precisa desligar isso.
+PROPS="$APP_ROOT/gradle.properties"
+if [ -f "$PROPS" ]; then
+    if ! grep -q "android.injected.testOnly" "$PROPS"; then
+        printf '\n# hub-game runner patch: o APK precisa ser instalavel pelo instalador normal\nandroid.injected.testOnly=false\n' >> "$PROPS"
+        echo "android.injected.testOnly=false aplicado em gradle.properties"
+    else
+        echo "android.injected.testOnly ja definido em gradle.properties"
+    fi
+fi

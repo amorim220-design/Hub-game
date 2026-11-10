@@ -93,6 +93,7 @@ cd "$APP_DIR"
 chmod +x ./gradlew 2>/dev/null || true
 ./gradlew --no-daemon -Dorg.gradle.jvmargs="-Xmx2500m" \
     -Pandroid.injected.build.abi="$ANDROID_ABI" \
+    -Pandroid.injected.testOnly=false \
     assembleRelease
 
 # Diagnostico: o AGP pode injetar android:testOnly="true" no manifest (o
