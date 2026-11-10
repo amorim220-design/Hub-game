@@ -100,6 +100,13 @@ jobs:
             tail -n 250 build.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # Surface the interesting lines as annotations, so they are visible
+          # from the API and in the checks tab without downloading the log.
+          grep -E "(^e: |error:|FAILURE:|What went wrong|> Task .* FAILED|Caused by:|A problem occurred|CMake Error|ndk-build)" build.log \
+            | head -60 \
+            | while IFS= read -r line; do
+                echo "::error title=Gradle::${line}"
+              done
           exit $status
 
       - name: Upload debug APK
