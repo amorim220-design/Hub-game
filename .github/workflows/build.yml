@@ -32,11 +32,12 @@ jobs:
 
       - name: Set up Android NDK (r27c) & CMake
         uses: nttld/setup-ndk@v1
+        id: setup-ndk
         with:
           ndk-version: r27c
           add-to-path: true
 
-      - name: Build DXVK for Android ARM64
+      - name: Configure DXVK Cross-Compilation for Android ARM64
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
@@ -57,10 +58,39 @@ jobs:
           EOF
           echo "DXVK cross-compilation profile generated."
 
+      - name: Create or Restore Keystores for CI
+        run: |
+          echo "Verifying debug.keystore..."
+          if [ ! -f "debug.keystore" ]; then
+            echo "debug.keystore not found, generating standard Android debug keystore..."
+            keytool -genkey -v -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          if [ ! -f "my-upload-key.jks" ]; then
+            echo "my-upload-key.jks not found, creating placeholder release keystore for CI..."
+            keytool -genkey -v -keystore my-upload-key.jks \
+              -storepass android \
+              -alias upload \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Upload Key,O=Android,C=US"
+          fi
+
       - name: Run Unit & Robolectric Tests
         run: gradle :app:testDebugUnitTest
 
       - name: Assemble Release and Debug APK
+        env:
+          STORE_PASSWORD: android
+          KEY_PASSWORD: android
         run: gradle :app:assembleDebug :app:assembleRelease
 
       - name: Sign Release APK
