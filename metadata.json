@@ -1,0 +1,6 @@
+{
+  "name": "VulkanCompatShell",
+  "description": "Compatibility shell and runtime loader for D3D9/Vulkan games on ARM64 Android",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,49 @@
+<resources>
+    <string name="app_name">VulkanCompatShell</string>
+    <string name="tab_game">Jogo</string>
+    <string name="tab_graphics">Gráficos &amp; DXVK</string>
+    <string name="tab_drivers">Drivers Vulkan</string>
+    <string name="tab_diagnostics">Diagnóstico</string>
+
+    <string name="title_select_game_folder">Pasta de Dados do Jogo</string>
+    <string name="desc_select_game_folder">Selecione o diretório onde estão os arquivos do jogo (ex.: pasta de instalação do PC com tracks, car data, etc.).</string>
+    <string name="btn_browse_folder">Procurar Pasta</string>
+    <string name="text_no_folder_selected">Nenhuma pasta selecionada</string>
+    <string name="text_folder_selected">Pasta selecionada: %s</string>
+
+    <string name="title_runtime_package">Pacote de Runtime (.so)</string>
+    <string name="desc_runtime_package">Gerencie e selecione o runtime ARM64 (DXVK + camada de translação / engine re-compilada).</string>
+    <string name="btn_import_runtime">Instalar Pacote (.zip)</string>
+    <string name="text_no_runtime_installed">Nenhum pacote de runtime instalado</string>
+    <string name="btn_launch_game">INICIAR JOGO</string>
+
+    <string name="title_resolution">Resolução Interna</string>
+    <string name="title_fps_limit">Limite de FPS</string>
+    <string name="title_widescreen">Correção Widescreen (HUD)</string>
+    <string name="desc_widescreen">Ajusta aspecto de HUD e câmera para 16:9 / 20:9 ultrawide.</string>
+    <string name="title_minimap">Correção de Minimapa</string>
+    <string name="desc_minimap">Evita distorção circular no radar/mapa em widescreen.</string>
+    <string name="title_pipeline_cache">Cache de Pipelines Vulkan</string>
+    <string name="desc_pipeline_cache">Salva shaders compilados em vulkan_pipelines.bin para reduzir stutters.</string>
+    <string name="title_cpu_textures">Texturas na CPU</string>
+    <string name="desc_cpu_textures">Fallback de streaming de texturas para compatibilidade com D3D9 lock rects.</string>
+    <string name="title_back_buffers">Buffer Triplo (Triple Buffering)</string>
+
+    <string name="title_vulkan_driver">Driver Vulkan Ativo</string>
+    <string name="driver_default">Driver Padrão do Sistema</string>
+    <string name="btn_import_driver">Instalar Driver Custom (.zip)</string>
+    <string name="title_installed_drivers">Drivers Instalados</string>
+
+    <string name="title_gpu_probe">Sonda de GPU (Processo Isolado)</string>
+    <string name="desc_gpu_probe">Testa suporte a Vulkan 1.1 e extensões gráficas num processo isolado (:gpu_probe) para evitar crash da UI.</string>
+    <string name="btn_run_probe">Executar Sonda de GPU</string>
+    <string name="title_diagnostics_export">Relatório de Diagnóstico</string>
+    <string name="desc_diagnostics_export">Gera arquivo ZIP contendo logs do motor, chamadas de hooks, probes de GPU e especificações do dispositivo.</string>
+    <string name="btn_export_diagnostics">Gerar Pacote de Diagnóstico (.zip)</string>
+
+    <string name="error_zip_slip">Tentativa de Zip Slip detectada no arquivo: %s</string>
+    <string name="error_zip_too_large">Arquivo ZIP excede o limite máximo permitido (%d MB).</string>
+    <string name="error_not_arm64">O arquivo .so não é compatível com ARM64 (AArch64). Arquivos PE (.exe/.dll) ou x86/x86_64 de PC não rodam nativamente sem tradutor ARM64!</string>
+    <string name="error_missing_manifest">Arquivo de manifesto meta.json não encontrado no pacote.</string>
+    <string name="success_package_installed">Pacote instalado com sucesso: %s</string>
+</resources>

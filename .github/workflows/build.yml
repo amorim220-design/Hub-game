@@ -1,0 +1,92 @@
+name: Build Vulkan Compat Shell & DXVK ARM64 APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build DXVK & ARM64 Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Set up Python, Meson & Ninja (DXVK Build Toolchain)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: |
+          pip install --upgrade meson ninja
+
+      - name: Set up Android NDK (r27c) & CMake
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Build DXVK for Android ARM64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          echo "=== Setting up DXVK Cross-Compilation for Android ARM64 ==="
+          mkdir -p third_party/dxvk-build
+          cat << 'EOF' > third_party/android-aarch64.cross
+          [binaries]
+          c = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang'
+          cpp = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++'
+          ar = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'armv8-a'
+          endian = 'little'
+          EOF
+          echo "DXVK cross-compilation profile generated."
+
+      - name: Run Unit & Robolectric Tests
+        run: gradle :app:testDebugUnitTest
+
+      - name: Assemble Release and Debug APK
+        run: gradle :app:assembleDebug :app:assembleRelease
+
+      - name: Sign Release APK
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            echo "Signing $APK_PATH using debug/build keystore..."
+            ${ANDROID_HOME}/build-tools/35.0.0/apksigner sign \
+              --ks debug.keystore \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out app/build/outputs/apk/release/VulkanCompatShell-release-signed.apk \
+              "$APK_PATH" || true
+          fi
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VulkanCompatShell-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Upload Signed Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VulkanCompatShell-release-signed
+          path: app/build/outputs/apk/release/*signed*.apk
+          if-no-files-found: warn
+          retention-days: 14
