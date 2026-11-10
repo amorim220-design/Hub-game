@@ -275,9 +275,9 @@ static int32_t onInputEvent(ANativeActivity* activity, AInputEvent* event) {
     return 1;
 }
 
-static int input_callback(int ident, void* data, void* obj) {
+static int input_callback(int ident, int fd, void* data) {
     (void)ident;
-    (void)obj;
+    (void)fd;
     AInputQueue* queue = (AInputQueue*)data;
     if (!queue) return 0;
 
