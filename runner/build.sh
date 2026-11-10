@@ -97,7 +97,12 @@ chmod +x ./gradlew 2>/dev/null || true
 
 # O modulo Android fica em <winlator-app>/app, entao os artefatos podem estar
 # em app/build/... ou app/app/build/... (depende da estrutura do upstream).
-APK="$(find "$APP_DIR" -path '*/outputs/apk/release/*.apk' 2>/dev/null | head -n 1 || true)"
+log "procurando o APK gerado"
+find "$APP_DIR" -type f -name '*.apk' 2>/dev/null | sed 's/^/  /' || true
+APK="$(find "$APP_DIR" -type f -name '*.apk' -path '*outputs*' 2>/dev/null | head -n 1 || true)"
+if [ -z "$APK" ]; then
+    APK="$(find "$APP_DIR" -type f -name '*.apk' 2>/dev/null | head -n 1 || true)"
+fi
 [ -n "$APK" ] || die "APK nao encontrado em $APP_DIR (outputs/apk/release)"
 
 # --- 5. collect -------------------------------------------------------------
