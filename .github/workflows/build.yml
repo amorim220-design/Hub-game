@@ -44,7 +44,7 @@ jobs:
       # user's "runtime package" (see README, section 3). If a prebuilt
       # arm64-v8a libdxvk.so is made available through the DXVK_PREBUILT_URL
       # repository variable, it is downloaded and packaged with the APK.
-      - name: Optional: fetch prebuilt DXVK for arm64-v8a
+      - name: "Optional: fetch prebuilt DXVK for arm64-v8a"
         env:
           DXVK_PREBUILT_URL: ${{ vars.DXVK_PREBUILT_URL }}
         run: |

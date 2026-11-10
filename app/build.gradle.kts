@@ -108,9 +108,9 @@ android {
 // Optional: a prebuilt arm64-v8a libdxvk.so dropped in third_party/dxvk-prebuilt
 // (see the CI workflow) is packaged with the APK. The shell works without it:
 // the DXVK build normally arrives inside the user's runtime package.
-android {
-  sourceSets["main"].jniLibs.srcDir(rootProject.file("third_party/dxvk-prebuilt/lib/arm64-v8a"))
-}
+android.sourceSets.getByName("main").jniLibs.srcDir(
+  rootProject.file("third_party/dxvk-prebuilt/lib/arm64-v8a")
+)
 
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
