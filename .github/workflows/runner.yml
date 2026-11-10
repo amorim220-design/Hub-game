@@ -42,10 +42,12 @@ jobs:
             tail -n 250 runner-build.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          # O GitHub limita a 10 anotacoes por passo: o log inteiro vai em uma
-          # unica anotacao (com %0A no lugar das quebras de linha).
-          PAYLOAD=$(tail -n 70 runner-build.log | sed 's/%/%25/g' | tr '\n' '\001' | sed 's/\x01/%0A/g')
+          # O GitHub limita a 10 anotacoes por passo: cada bloco de log vai em
+          # uma unica anotacao (com %0A no lugar das quebras de linha).
+          PAYLOAD=$(grep -nE "Killed|OutOfMemory|No space left|FAILURE|error:|Exception|Caused by|BUILD (SUCCESSFUL|FAILED)|error " runner-build.log | tail -n 40 | sed 's/%/%25/g' | tr '\n' '\001' | sed 's/\x01/%0A/g')
           echo "::error title=Runner::${PAYLOAD}"
+          TAIL=$(tail -n 25 runner-build.log | sed 's/%/%25/g' | tr '\n' '\001' | sed 's/\x01/%0A/g')
+          echo "::error title=Runner-tail::${TAIL}"
           exit $status
 
       - name: Upload the runner APK

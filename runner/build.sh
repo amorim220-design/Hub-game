@@ -91,7 +91,7 @@ sh "$HERE/patches/apply.sh" "$APP_DIR"
 log "buildando o APK (abi $ANDROID_ABI)"
 cd "$APP_DIR"
 chmod +x ./gradlew 2>/dev/null || true
-./gradlew --no-daemon -Dorg.gradle.jvmargs="-Xmx4g" \
+./gradlew --no-daemon -Dorg.gradle.jvmargs="-Xmx2500m" \
     -Pandroid.injected.build.abi="$ANDROID_ABI" \
     assembleRelease
 
