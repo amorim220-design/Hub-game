@@ -55,8 +55,16 @@ if [ ! -d "$WORKDIR/.git" ]; then
     mkdir -p "$WORKDIR"
     git -C "$WORKDIR" init -q
     git -C "$WORKDIR" remote add origin "$WINLATOR_REPO"
-    git -C "$WORKDIR" fetch -q --depth 1 origin "$WINLATOR_REF"
-    git -C "$WORKDIR" checkout -q FETCH_HEAD
+    # Busca pelo SHA completo. Se o servidor recusar (objeto não anunciado),
+    # cai para a branch e o checkout do commit.
+    if ! git -C "$WORKDIR" fetch -q --depth 1 origin "$WINLATOR_REF"; then
+        log "fetch por SHA recusado; buscando a branch e fazendo checkout do commit"
+        git -C "$WORKDIR" fetch -q --depth 50 origin main || \
+            git -C "$WORKDIR" fetch -q origin
+        git -C "$WORKDIR" checkout -q "$WINLATOR_REF"
+    else
+        git -C "$WORKDIR" checkout -q FETCH_HEAD
+    fi
     git -C "$WORKDIR" submodule update -q --init --recursive --depth 1
 fi
 APP_DIR="$WORKDIR/app"
