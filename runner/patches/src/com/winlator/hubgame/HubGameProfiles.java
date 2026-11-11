@@ -40,15 +40,18 @@ public final class HubGameProfiles {
         public final String graphicsDriver;
         /** "1" para forcar a janela do jogo em tela cheia, ou null. */
         public final String forceFullscreen;
+        /** Id do perfil de controles na tela (ver assets/inputcontrols/profiles) ou null. */
+        public final String controlsProfile;
 
         Profile(String name, String screenSize, String envVars, String dxwrapper, String graphicsDriver,
-                String forceFullscreen) {
+                String forceFullscreen, String controlsProfile) {
             this.name = name;
             this.screenSize = screenSize;
             this.envVars = envVars;
             this.dxwrapper = dxwrapper;
             this.graphicsDriver = graphicsDriver;
             this.forceFullscreen = forceFullscreen;
+            this.controlsProfile = controlsProfile;
         }
 
         /** Monta o conteudo da secao [Extra Data] deste perfil. */
@@ -59,6 +62,7 @@ public final class HubGameProfiles {
             appendIfSet(sb, "graphicsDriver", graphicsDriver);
             appendIfSet(sb, "envVars", envVars);
             appendIfSet(sb, "forceFullscreen", forceFullscreen);
+            appendIfSet(sb, "controlsProfile", controlsProfile);
             return sb.toString();
         }
 
@@ -68,6 +72,16 @@ public final class HubGameProfiles {
             }
         }
     }
+
+    /**
+     * Id do perfil de controles "FPS" (assets/inputcontrols/profiles/controls-4.icp).
+     *
+     * <p>E o unico perfil que traz {@code mouseMoveMode}: o toque move o mouse
+     * de verdade, alem dos botoes de teclado. E o que um jogo de PC com mouse
+     * (olhar, mirar) precisa - o NFSU2, por exemplo, usa o mouse para olhar e
+     * o teclado para acelerar.
+     */
+    public static final String CONTROLS_PROFILE_FPS = "4";
 
     /**
      * Perfil padrao de um executavel.
@@ -98,21 +112,21 @@ public final class HubGameProfiles {
 
         // Need for Speed Underground 2 e os demais jogos da EA da era 2004:
         // lista fixa de modos, todos 4:3 (640x480, 800x600, 1024x768,
-        // 1280x960, 1280x1024).
+        // 1280x960, 1280x1024). Jogo de mouse: olhar e acelerar.
         if (exe.equals("speed2.exe")) {
-            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1");
+            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
         }
 
         // GTA SA: o proprio exe traz "Cannot find 800x600x32 video mode" quando
         // o modo 800x600 nao existe, e a tela precisa ser maior que o jogo
         // para o forceFullscreen escalar.
         if (exe.equals("gta_sa.exe") || exe.equals("gta_sa1.exe") || exe.equals("gta_sa2.exe")) {
-            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1");
+            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
         }
 
         // Sem resolucao forcada e sem forcar fullscreen: o container mantem o
         // padrao dele e o jogo abre como quiser.
-        return new Profile(exe, null, null, null, null, null);
+        return new Profile(exe, null, null, null, null, null, null);
     }
 
     /**
