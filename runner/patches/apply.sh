@@ -10,13 +10,16 @@
 # Os patches sao aplicados por insercao (nao por diff), para nao quebrar a
 # cada atualizacao do upstream. E idempotente.
 #
-# Fase 1 (esta fase): assinatura de release.
-# Fase 3 vai acrescentar aqui a injecao dos hooks (LD_PRELOAD) no processo
-# do jogo.
+# Fase 1: assinatura de release (o APK precisa ser instalavel pelo instalador
+#          normal do Android).
+# Fase 2: importacao automatica de jogos de PC + perfis por jogo.
+#          - copia as classes em com.winlator.hubgame para o upstream
+#          - insere a chamada de importacao no ContainerManager do upstream
 set -euo pipefail
 
 APP_ROOT="${1:?uso: apply.sh <winlator-app-dir>}"
 MODULE_GRADLE="$APP_ROOT/app/build.gradle"
+PATCHES_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ ! -f "$MODULE_GRADLE" ]; then
     #compat: se a pessoa passou o diretorio do modulo, aceita assim mesmo
@@ -30,10 +33,7 @@ fi
 
 MARKER="# --- hub-game runner patch ---"
 
-if grep -q "$MARKER" "$MODULE_GRADLE"; then
-    echo "patch do runner ja aplicado"
-    exit 0
-fi
+if ! grep -q "$MARKER" "$MODULE_GRADLE"; then
 
 cat >> "$MODULE_GRADLE" <<'EOF'
 
@@ -66,6 +66,10 @@ EOF
 
 echo "patch de assinatura aplicado em $MODULE_GRADLE"
 
+else
+    echo "patch de assinatura ja aplicado em $MODULE_GRADLE"
+fi
+
 # --- android.injected.testOnly ----------------------------------------------
 # O AGP marca a variante como "de teste" e injeta android:testOnly="true" no
 # manifest. O instalador normal do Android recusa APK de teste
@@ -80,3 +84,98 @@ if [ -f "$PROPS" ]; then
         echo "android.injected.testOnly ja definido em gradle.properties"
     fi
 fi
+
+# --- Fase 2: importacao automatica de jogos + perfis por jogo -----------------
+# 1) copia as classes de com.winlator.hubgame para o upstream
+# 2) insere a chamada de importacao no ContainerManager (createContainer)
+#
+# Por que insercao e nao diff: o upstream do Winlator muda toda semana e um
+# diff quebraria o build a cada atualizacao. As ancoras abaixo sao estaveis
+# ha anos no upstream e o patch falha alto (exit 1) se nao forem encontradas,
+# em vez de compilar silenciosamente sem o recurso.
+HUBGAME_PKG="com/winlator/hubgame"
+HUBGAME_JAVA_DIR="$APP_ROOT/app/src/main/java"
+HUBGAME_SRC="$HUBGAME_JAVA_DIR/$HUBGAME_PKG"
+
+if [ ! -d "$HUBGAME_JAVA_DIR" ]; then
+    echo "upstream sem app/src/main/java: a estrutura mudou?" >&2
+    exit 1
+fi
+
+mkdir -p "$HUBGAME_SRC"
+cp "$PATCHES_DIR"/src/$HUBGAME_PKG/*.java "$HUBGAME_SRC"/
+echo "classes hubgame copiadas para $HUBGAME_SRC"
+
+# Insere a chamada de importacao em ContainerManager.createContainer.
+CONTAINER_MANAGER="$APP_ROOT/app/src/main/java/com/winlator/container/ContainerManager.java"
+if [ ! -f "$CONTAINER_MANAGER" ]; then
+    echo "ContainerManager.java nao encontrado em $CONTAINER_MANAGER" >&2
+    exit 1
+fi
+
+CALL_MARKER="HubGameBootstrap.onContainerCreated(context, container);"
+IMPORT_MARKER="import com.winlator.hubgame.HubGameBootstrap;"
+
+if grep -q "$CALL_MARKER" "$CONTAINER_MANAGER"; then
+    echo "patch de importacao de jogos ja aplicado"
+else
+    # Ancora: a linha que adiciona o container recem-criado a lista. E unica no
+    # arquivo e o ponto onde o container ja esta pronto para ser usado.
+    #
+    # awk (e nao python) porque o runner de CI e ubuntu, mas o build local roda
+    # em qualquer shell; awk esta em todo lugar. O script falha alto (exit 1)
+    # se a ancora nao aparecer exatamente uma vez, em vez de compilar
+    # silenciosamente sem o recurso.
+    TMP_FILE="$(mktemp)"
+    awk -v marker="$CALL_MARKER" -v indent="            " '
+        {
+            print
+            if ($0 == "            containers.add(container);") {
+                count++
+                if (count > 1) {
+                    print "ancora duplicada" > "/dev/stderr"
+                    exit 3
+                }
+                print indent marker
+            }
+        }
+        END { if (count != 1) exit 4 }
+    ' "$CONTAINER_MANAGER" > "$TMP_FILE" || {
+        rc=$?
+        rm -f "$TMP_FILE"
+        echo "ancora 'containers.add(container);' nao encontrada exatamente uma vez em $CONTAINER_MANAGER - o upstream mudou?" >&2
+        exit 1
+    }
+
+    mv "$TMP_FILE" "$CONTAINER_MANAGER"
+    echo "patch de importacao de jogos aplicado em $CONTAINER_MANAGER"
+fi
+
+# O import correspondente: sem ele o Java nao compila. Vai para o bloco de
+# imports do upstream, em ordem alfabetica, logo antes do import do RootFS.
+if ! grep -q "$IMPORT_MARKER" "$CONTAINER_MANAGER"; then
+    # Ancora: o import de com.winlator.xenvironment.RootFS. O ContainerManager
+    # esta no mesmo pacote do Container (por isso nao ha import dele), entao
+    # RootFS e a referencia estavel do bloco de imports do upstream.
+    IMPORT_ANCHOR="import com.winlator.xenvironment.RootFS;"
+    if ! grep -q "^$IMPORT_ANCHOR$" "$CONTAINER_MANAGER"; then
+        echo "ancora de import nao encontrada em $CONTAINER_MANAGER - o upstream mudou?" >&2
+        exit 1
+    fi
+
+    TMP_FILE="$(mktemp)"
+    awk -v anchor="$IMPORT_ANCHOR" -v imp="$IMPORT_MARKER" '
+        { print }
+        $0 == anchor { count++; print imp }
+        END { if (count != 1) exit 4 }
+    ' "$CONTAINER_MANAGER" > "$TMP_FILE" || {
+        rm -f "$TMP_FILE"
+        echo "ancora de import duplicada ou ausente em $CONTAINER_MANAGER - o upstream mudou?" >&2
+        exit 1
+    }
+
+    mv "$TMP_FILE" "$CONTAINER_MANAGER"
+    echo "import de HubGameBootstrap adicionado em $CONTAINER_MANAGER"
+fi
+
+

@@ -61,12 +61,56 @@ pelo próprio repositório upstream, trocar o commit troca tudo junto.
    Wine e baixa os componentes necessários).
 3. Crie um atalho para um `.exe` e rode.
 
+Com o patch do runner (Fase 2), o passo 3 é automático: ao criar o container,
+o runner varre `/storage/emulated/0/Download` (a unidade `D:` do container),
+importa cada jogo para dentro do container (unidade `C:`, gravável) e grava o
+atalho `.desktop` com o perfil do jogo.
+
+### Perfis por jogo (Fase 3)
+
+O perfil de cada jogo vai no próprio atalho, na seção `[Extra Data]` — que é o
+mecanismo que o upstream do Winlator já lê (`Shortcut` +
+`XServerDisplayActivity`). As opções são as mesmas que o upstream aceita:
+`screenSize`, `graphicsDriver`, `dxwrapper`, `wincomponents`, `envVars`.
+
+Regras em `runner/patches/src/com/winlator/hubgame/HubGameProfiles.java`:
+
+| Jogo | Perfil | Motivo |
+|---|---|---|
+| `gta_sa.exe` | `screenSize=800x600`, `envVars=WINEESYNC=0` | O GTA SA original só conhece modos 4:3. Em 1280x720 o pedido do modo `800x600x32` falha (o próprio exe traz a string `Cannot find 800x600x32 video mode`) e o jogo cai numa janela 800x600 no canto da tela. |
+| demais `.exe` | `screenSize=1280x720` | 16:9, padrão do container. |
+
+### Por que não há LD_PRELOAD no runner
+
+O plano original da Fase 3 era injetar `libmain_hook.so` /
+`libfile_redirect_hook.so` no processo do jogo (hooks de `android_dlopen_ext`,
+`fopen`, `gsl_memory_alloc_pure`). Isso não se aplica ao runner, e a verificação
+mostrou por quê:
+
+- O runner **não** roda o motor do jogo no processo do app. O app é o host; o
+  jogo é um PE do Windows dentro do Wine, em processo separado. Um `.so`
+  ARM64 com hook de `fopen` do bionic não alcança as chamadas do guest.
+- O Wine **já** resolve o mapeamento `C:\` internamente
+  (`~/.wine/dosdevices/`), então o hook de redirecionar `C:\...` seria
+  redundante.
+- O `BOX64_LD_PRELOAD` existe no binário do Box64, mas só carrega bibliotecas
+  **x86**, e um hook ARM64 não é carregável no guest de qualquer jeito.
+
+O que dá para fazer por jogo no runner é o que o upstream já expõe: o
+`[Extra Data]` do atalho. É o mecanismo usado acima. Os hooks continuam
+valendo para o outro produto do repositório (`app/`, o shell nativo), onde o
+motor do jogo **é** carregado no processo do app por `dlopen`.
+
 ### O que ainda depende do usuário
 
 - **Os arquivos do jogo** (o APK não pode conter jogo comercial).
-- **Drivers de GPU fora do Adreno**: Mali precisa do PanVK, PowerVR precisa de
-  um driver compatível. Dá para automatizar o download no primeiro uso
-  (Fase 2).
+- **Drivers de GPU fora do Adreno**: neste aparelho o driver padrão do upstream
+  já é Vortek+Gladio (`GraphicsDrivers.getDefaultDriver` só escolhe Turnip
+  quando detecta Adreno), então Mali funciona com o que vem embutido. Um driver
+  Vulkan nativo para Mali continua sendo trabalho futuro.
+- **Jogos que precisam de BIOS/`:arch`**: PS2 precisa de BIOS de PS2 (o
+  `DuckStation` instalado no aparelho usa os de PS1 que estão em
+  `/storage/emulated/0/games/bios`).
 
 ## Limites conhecidos
 
@@ -74,3 +118,16 @@ pelo próprio repositório upstream, trocar o commit troca tudo junto.
 - O upstream é atualizado quase toda semana; o pin precisa ser acompanhado.
 - A build do upstream não tem CI próprio: cada build nosso é uma aposta no
   estado do repositório pinado (por isso o log vai para o *job summary*).
+- O patch do runner insere código no `ContainerManager` do upstream por âncora.
+  Se o upstream mudar essa âncora, o build **falha** (em vez de compilar sem o
+  recurso) — é proposital; veja `runner/patches/apply.sh`.
+
+## Testes do patch
+
+```bash
+sh runner/patches/tests/run.sh
+```
+
+Roda na máquina de build, sem Android SDK: reimplementa o parser de atalho do
+upstream (`Shortcut` + `StringUtils.unescapeDOSPath`) e confere que o
+`.desktop` gerado pelo patch volta a ser lido como o caminho certo.
