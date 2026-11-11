@@ -151,6 +151,41 @@ else
     echo "patch de importacao de jogos aplicado em $CONTAINER_MANAGER"
 fi
 
+
+# --- Fase 2 (parte 2): sincronizar os atalhos ao abrir a aba de atalhos -----
+# A importacao roda na criacao do container. Para que uma correcao de perfil
+# (resolucao, forcar fullscreen) chegue aos atalhos que JA existem, a
+# sincronizacao tambem roda quando a aba de atalhos e aberta.
+SHORTCUTS_FRAGMENT="$APP_ROOT/app/src/main/java/com/winlator/ShortcutsFragment.java"
+if [ ! -f "$SHORTCUTS_FRAGMENT" ]; then
+    echo "ShortcutsFragment.java nao encontrado em $SHORTCUTS_FRAGMENT" >&2
+    exit 1
+fi
+
+SYNC_MARKER="com.winlator.hubgame.HubGameBootstrap.syncContainer("
+
+
+if grep -q "$SYNC_MARKER" "$SHORTCUTS_FRAGMENT"; then
+    echo "patch de sincronizacao de atalhos ja aplicado"
+else
+    # Ancora: a linha que carrega a lista de atalhos. E unica no arquivo e
+    # e o ponto onde o container ja esta carregado.
+    SYNC_ANCHOR="        ArrayList<Shortcut> shortcuts = manager.loadShortcuts(selectedFolder);"
+    if ! grep -qF "$SYNC_ANCHOR" "$SHORTCUTS_FRAGMENT"; then
+        echo "ancora de sincronizacao nao encontrada em $SHORTCUTS_FRAGMENT - o upstream mudou?" >&2
+        exit 1
+    fi
+
+    TMP_FILE="$(mktemp)"
+    awk -v anchor="$SYNC_ANCHOR" -v call="        for (com.winlator.container.Container c : manager.getContainers()) com.winlator.hubgame.HubGameBootstrap.syncContainer(getContext(), c, \"atalhos\");" '
+        { print }
+        $0 == anchor { print call }
+    ' "$SHORTCUTS_FRAGMENT" > "$TMP_FILE"
+
+    mv "$TMP_FILE" "$SHORTCUTS_FRAGMENT"
+    echo "patch de sincronizacao de atalhos aplicado em $SHORTCUTS_FRAGMENT"
+fi
+
 # O import correspondente: sem ele o Java nao compila. Vai para o bloco de
 # imports do upstream, em ordem alfabetica, logo antes do import do RootFS.
 if ! grep -q "$IMPORT_MARKER" "$CONTAINER_MANAGER"; then
