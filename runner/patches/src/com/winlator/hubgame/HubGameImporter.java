@@ -62,7 +62,9 @@ public final class HubGameImporter {
             File targetDir = new File(importDir, exeDir.getName());
             File copiedExe;
 
-            if (importDir.equals(exeDir)) {
+            if (sameFile(exeDir, sharedRoot)) {
+                // O .exe esta direto na pasta compartilhada: copiar a pasta
+                // inteira arrastaria tudo que esta em Download (gigabytes).
                 copiedExe = new File(targetDir, exeName);
                 if (!FileUtils.copy(exe, copiedExe)) continue;
             }
@@ -72,32 +74,58 @@ public final class HubGameImporter {
             }
 
             if (!copiedExe.isFile()) continue;
-            if (writeShortcut(container, copiedExe)) imported++;
+            if (writeShortcut(container, copiedExe, gameName(exeDir, exeName, sharedRoot))) imported++;
         }
 
         return imported;
     }
 
     /**
+     * Nome do jogo como aparece no launcher: o nome da pasta do jogo quando o
+     * executavel esta em uma subpasta (o caso comum), senao o nome do arquivo.
+     */
+    static String gameName(File exeDir, String exeName, File sharedRoot) {
+        String base = HubGameProfiles.nameOf(exeName);
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) base = base.substring(0, dot);
+
+        if (exeDir == null) return base;
+
+        // O executavel esta na raiz da pasta compartilhada: o nome do arquivo e o
+        // melhor que temos (a pasta se chama "Download", que nao identifica nada).
+        if (sharedRoot != null && sameFile(exeDir, sharedRoot)) return base;
+
+        String dirName = exeDir.getName();
+        if (dirName.isEmpty()) return base;
+        return dirName;
+    }
+
+    /**
      * Grava o atalho .desktop do jogo, com o perfil do jogo na secao [Extra Data].
      */
-    public static boolean writeShortcut(Container container, File exe) {
+    public static boolean writeShortcut(Container container, File exe, String displayName) {
         String dosPath = WineUtils.unixToDOSPath(exe.getPath(), container);
         if (dosPath.isEmpty()) return false;
 
         HubGameProfiles.Profile profile = HubGameProfiles.profileFor(exe.getName());
-        String content = HubGameProfiles.buildDesktopEntry(exe.getPath(), dosPath, profile);
+        String content = HubGameProfiles.buildDesktopEntry(exe.getPath(), dosPath, displayName, profile);
 
         File desktopDir = new File(container.getUserDir(), "Desktop");
         if (!desktopDir.isDirectory() && !desktopDir.mkdirs()) return false;
 
-        File shortcut = new File(desktopDir, HubGameProfiles.nameOf(exe.getName()) + ".desktop");
+        File shortcut = new File(desktopDir, displayName + ".desktop");
         return FileUtils.writeString(shortcut, content);
     }
 
     /** Verdadeiro quando o nome parece o de um jogo (e nao de um instalador). */
     static boolean isGame(String fileName) {
         return HubGameProfiles.isGameExecutable(fileName);
+    }
+
+    /** Compara dois caminhos sem depender do canonical path (o destino nem existe ainda). */
+    private static boolean sameFile(File a, File b) {
+        if (a == null || b == null) return false;
+        return a.getAbsolutePath().equals(b.getAbsolutePath());
     }
 
     /** Procura executaveis recursivamente, com limite de profundidade. */

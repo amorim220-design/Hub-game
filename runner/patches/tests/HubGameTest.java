@@ -117,7 +117,7 @@ public final class HubGameTest {
 
         // Ida e volta pelo atalho gerado pelo patch.
         HubGameProfiles.Profile profile = HubGameProfiles.profileFor("gta_sa.exe");
-        String desktop = HubGameProfiles.buildDesktopEntry(unixExe, dosExe, profile);
+        String desktop = HubGameProfiles.buildDesktopEntry(unixExe, dosExe, "GTA San Andreas", profile);
         System.out.println("\n.conteudo do .desktop gerado:\n" + desktop);
 
         String parsed = shortcutPath(desktop);
@@ -137,9 +137,13 @@ public final class HubGameTest {
         // Um jogo com espaco no nome.
         String spaced = toDosPath(root + "/.wine/drive_c/users/xuser/hubgame/My Game/run.exe", root);
         String spacedDesktop = HubGameProfiles.buildDesktopEntry(
-                root + "/.wine/drive_c/users/xuser/hubgame/My Game/run.exe", spaced,
+                root + "/.wine/drive_c/users/xuser/hubgame/My Game/run.exe", spaced, "My Game",
                 HubGameProfiles.profileFor("run.exe"));
         check("caminho com espaco sobrevive", spaced, shortcutPath(spacedDesktop));
+
+        // O nome mostrado e o do jogo, nao o do executavel.
+        check("nome do atalho", "GTA San Andreas",
+                desktop.split("\n")[2].substring("Name=".length()));
 
         // Exec precisa conter "wine " para o upstream achar o caminho.
         check("Exec contem 'wine '", true, desktop.contains("Exec=wine "));

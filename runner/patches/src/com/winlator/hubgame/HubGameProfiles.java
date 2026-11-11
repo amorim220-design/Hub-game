@@ -98,13 +98,14 @@ public final class HubGameProfiles {
      *
      * @param executablePath caminho unix do executavel (usado no nome)
      * @param dosPath       caminho no espaco do Wine (ex.: {@code C:\\games\\gta_sa.exe})
+     * @param displayName   nome do jogo como aparece no launcher
      * @param profile       perfil do jogo (pode ser null)
      */
-    public static String buildDesktopEntry(String executablePath, String dosPath, Profile profile) {
+    public static String buildDesktopEntry(String executablePath, String dosPath, String displayName, Profile profile) {
         StringBuilder sb = new StringBuilder();
         sb.append(DESKTOP_SECTION).append('\n');
         sb.append("Type=Application\n");
-        sb.append("Name=").append(nameOf(executablePath)).append('\n');
+        sb.append("Name=").append(displayName).append('\n');
         // Sem aspas: o upstream extrai o caminho com
         // execArgs.substring(execArgs.lastIndexOf("wine ") + 4) seguido de um unescape
         // proprio; com aspas o caminho sairia com as aspas e o upstream nao acharia
