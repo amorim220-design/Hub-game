@@ -129,10 +129,21 @@ public final class HubGameTest {
         check("perfil do GTA: screenSize", "800x600", profile.screenSize);
         check("perfil do GTA: envVars", "WINEESYNC=0", profile.envVars);
 
-        // Qualquer outro jogo fica em 16:9.
+        // NFSU2: lista fixa de modos 4:3; 1280x720 nao existe nela e o jogo
+        // saia sozinho.
+        HubGameProfiles.Profile nfsu2 = HubGameProfiles.profileFor("SPEED2.EXE");
+        check("perfil do NFSU2: screenSize", "800x600", nfsu2.screenSize);
+
+        // Jogo desconhecido: nao forcar resolucao. O container ja vem em
+        // 1280x720 e forcar um modo que o jogo nao tem faz ele sair sozinho.
         HubGameProfiles.Profile other = HubGameProfiles.profileFor("de.exe");
-        check("perfil generico: screenSize", "1280x720", other.screenSize);
+        check("perfil generico: sem screenSize", "", other.screenSize == null ? "" : other.screenSize);
         check("perfil generico: sem envVars", "", other.envVars == null ? "" : other.envVars);
+
+        // O atalho de um jogo generico nao deve ter [Extra Data] sem nada util.
+        String genericDesktop = HubGameProfiles.buildDesktopEntry(unixExe, dosExe, "Jogo",
+                HubGameProfiles.profileFor("de.exe"));
+        check("atalho generico sem [Extra Data]", false, genericDesktop.contains("[Extra Data]"));
 
         // Um jogo com espaco no nome.
         String spaced = toDosPath(root + "/.wine/drive_c/users/xuser/hubgame/My Game/run.exe", root);

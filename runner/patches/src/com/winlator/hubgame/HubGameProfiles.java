@@ -67,15 +67,22 @@ public final class HubGameProfiles {
     /**
      * Perfil padrao de um executavel.
      *
-     * <p>Regras:
+     * <p>Regra geral: <b>nao forcar resolucao</b>. O container ja vem em
+     * 1280x720 e muitos jogos ancient tem uma lista fixa de modos: se o modo
+     * pedido nao existir, o jogo simplesmente sai (no aparelho, o NFSU2
+     * fechava sozinho com 1280x720, que nao esta na lista dele - so 640x480,
+     * 800x600, 1024x768, 1280x960, 1280x1024). Forcar 800x600 para todo
+     * jogo 4:3 tambem quebraria os que so aceitam 16:9.
+     *
+     * <p>Excecoes, onde o modo e conhecido:
      * <ul>
-     *   <li>{@code gta_sa.exe}: 800x600. O GTA San Andreas original so conhece modos
-     *       4:3 (640x480, 800x600, 1024x768). Com o container em 1280x720 o pedido
-     *       do modo 800x600x32 falha (o proprio exe traz a string
-     *       {@code "Cannot find 800x600x32 video mode"}) e o jogo cai em uma janela
-     *       800x600 no canto da tela. Em 800x600 o modo existe e o jogo entra
-     *       fullscreen de verdade.</li>
-     *   <li>Demais .exe: 1280x720 (padrao 16:9 do container).</li>
+     *   <li>{@code gta_sa.exe}: 800x600. O GTA San Andreas original so conhece
+     *       modos 4:3 (640x480, 800x600, 1024x768). Em 1280x720 o pedido do
+     *       modo 800x600x32 falha (o proprio exe traz a string
+     *       {@code "Cannot find 800x600x32 video mode"}) e o jogo cai numa
+     *       janela 800x600 no canto da tela.</li>
+     *   <li>{@code speed2.exe} (Need for Speed Underground 2): 800x600, mesmo
+     *       motivo - lista fixa 4:3.</li>
      * </ul>
      */
     public static Profile profileFor(String executableName) {
@@ -86,7 +93,13 @@ public final class HubGameProfiles {
             return new Profile(exe, "800x600", "WINEESYNC=0", null, null);
         }
 
-        return new Profile(exe, "1280x720", null, null, null);
+        // Need for Speed Underground 2 e os demais jogos da EA da era 2004.
+        if (exe.equals("speed2.exe")) {
+            return new Profile(exe, "800x600", "WINEESYNC=0", null, null);
+        }
+
+        // Sem resolucao forcada: o container mantem o padrao dele (1280x720).
+        return new Profile(exe, null, null, null, null);
     }
 
     /**

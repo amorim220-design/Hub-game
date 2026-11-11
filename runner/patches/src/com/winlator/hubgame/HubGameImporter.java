@@ -61,20 +61,23 @@ public final class HubGameImporter {
             File exeDir = exe.getParentFile();
             File targetDir = new File(importDir, exeDir.getName());
             File copiedExe;
+            String displayName = gameName(exeDir, exeName, sharedRoot);
 
             if (sameFile(exeDir, sharedRoot)) {
                 // O .exe esta direto na pasta compartilhada: copiar a pasta
                 // inteira arrastaria tudo que esta em Download (gigabytes).
                 copiedExe = new File(targetDir, exeName);
-                if (!FileUtils.copy(exe, copiedExe)) continue;
+                if (!copiedExe.isFile() && !FileUtils.copy(exe, copiedExe)) continue;
             }
             else {
-                if (!FileUtils.copy(exeDir, targetDir)) continue;
+                // Copia so se ainda nao estiver no container: o jogo pode ter
+                // gigabytes e a importacao roda a cada abertura do app.
+                if (!targetDir.isDirectory() && !FileUtils.copy(exeDir, targetDir)) continue;
                 copiedExe = new File(targetDir, exeName);
             }
 
             if (!copiedExe.isFile()) continue;
-            if (writeShortcut(container, copiedExe, gameName(exeDir, exeName, sharedRoot))) imported++;
+            if (writeShortcut(container, copiedExe, displayName)) imported++;
         }
 
         return imported;
@@ -102,6 +105,10 @@ public final class HubGameImporter {
 
     /**
      * Grava o atalho .desktop do jogo, com o perfil do jogo na secao [Extra Data].
+     *
+     * <p>Sempre reescreve: assim uma mudanca no perfil (por exemplo, corrigir
+     * a resolucao de um jogo que saia sozinho) vale no proximo start do app,
+     * sem o usuario precisar apagar o atalho na mao.
      */
     public static boolean writeShortcut(Container container, File exe, String displayName) {
         String dosPath = WineUtils.unixToDOSPath(exe.getPath(), container);
@@ -112,6 +119,14 @@ public final class HubGameImporter {
 
         File desktopDir = new File(container.getUserDir(), "Desktop");
         if (!desktopDir.isDirectory() && !desktopDir.mkdirs()) return false;
+
+        // Remove o atalho antigo, que pode ter outro nome (versao anterior do
+        // patch nomeava o atalho pelo executavel).
+        String exeBase = HubGameProfiles.nameOf(exe.getName());
+        if (!exeBase.equals(displayName)) {
+            File old = new File(desktopDir, exeBase + ".desktop");
+            if (old.isFile()) old.delete();
+        }
 
         File shortcut = new File(desktopDir, displayName + ".desktop");
         return FileUtils.writeString(shortcut, content);
