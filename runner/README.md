@@ -122,6 +122,18 @@ motor do jogo **é** carregado no processo do app por `dlopen`.
   Se o upstream mudar essa âncora, o build **falha** (em vez de compilar sem o
   recurso) — é proposital; veja `runner/patches/apply.sh`.
 
+## Assinatura
+
+A chave de assinatura do runner fica versionada em `runner/keystore/runner.keystore`
+(senha `runner`). Ela precisa ser **estável**: o Android só aceita um APK
+atualizando outro quando a assinatura é a mesma. Com uma chave nova a cada
+build, o aparelho recusaria a atualização
+(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) e o usuário teria que desinstalar — o
+que apaga o container e os jogos importados.
+
+O `build.sh` só gera a chave se ela ainda não existir, e o CI usa a mesma
+versão do repositório.
+
 ## Testes do patch
 
 ```bash

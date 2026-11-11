@@ -72,6 +72,11 @@ APP_DIR="$WORKDIR/app"
     || die "o submodule 'app' nao foi inicializado (rode: git submodule update --init --recursive)"
 
 # --- 2. keystore (o Gradle assina o release com ele) ----------------------
+# A chave precisa ser ESTAVEL entre builds: se cada build gerar uma chave nova,
+# o APK sai com assinatura diferente e o aparelho recusa a atualizacao
+# (INSTALL_FAILED_UPDATE_INCOMPATIBLE), obrigando a desinstalar - o que apaga o
+# container e os jogos importados. Por isso a chave do runner e versionada em
+# runner/keystore/ e so e gerada se ainda nao existir.
 mkdir -p "$(dirname "$KEYSTORE")"
 if [ ! -f "$KEYSTORE" ]; then
     log "gerando o keystore em $KEYSTORE"

@@ -30,6 +30,10 @@ jobs:
 
       - name: Build the runner APK
         env:
+          # A chave e versionada em runner/keystore/ para que o APK de cada
+          # build tenha a MESMA assinatura. Sem isso o aparelho recusa a
+          # atualizacao por cima (INSTALL_FAILED_UPDATE_INCOMPATIBLE) e o
+          # usuario teria que desinstalar - o que apaga o container e os jogos.
           KEYSTORE_PATH: ${{ github.workspace }}/runner/keystore/runner.keystore
           STORE_PASSWORD: runner
           KEY_ALIAS: runner
