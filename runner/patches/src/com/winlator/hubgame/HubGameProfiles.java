@@ -30,7 +30,7 @@ public final class HubGameProfiles {
     public static final class Profile {
         /** Nome do executavel, em minusculas. */
         public final String name;
-        /** Tamanho de tela desejado (ex.: {@code 800x600}) ou null. */
+        /** Tamanho de tela desejado (ex.: {@code 1280x720}) ou null. */
         public final String screenSize;
         /** Variaveis de ambiente extras (ex.: {@code WINEESYNC=0}) ou null. */
         public final String envVars;
@@ -38,13 +38,17 @@ public final class HubGameProfiles {
         public final String dxwrapper;
         /** Driver grafico desejado (ex.: {@code vortek,gladio}) ou null. */
         public final String graphicsDriver;
+        /** "1" para forcar a janela do jogo em tela cheia, ou null. */
+        public final String forceFullscreen;
 
-        Profile(String name, String screenSize, String envVars, String dxwrapper, String graphicsDriver) {
+        Profile(String name, String screenSize, String envVars, String dxwrapper, String graphicsDriver,
+                String forceFullscreen) {
             this.name = name;
             this.screenSize = screenSize;
             this.envVars = envVars;
             this.dxwrapper = dxwrapper;
             this.graphicsDriver = graphicsDriver;
+            this.forceFullscreen = forceFullscreen;
         }
 
         /** Monta o conteudo da secao [Extra Data] deste perfil. */
@@ -54,6 +58,7 @@ public final class HubGameProfiles {
             appendIfSet(sb, "dxwrapper", dxwrapper);
             appendIfSet(sb, "graphicsDriver", graphicsDriver);
             appendIfSet(sb, "envVars", envVars);
+            appendIfSet(sb, "forceFullscreen", forceFullscreen);
             return sb.toString();
         }
 
@@ -67,39 +72,47 @@ public final class HubGameProfiles {
     /**
      * Perfil padrao de um executavel.
      *
-     * <p>Regra geral: <b>nao forcar resolucao</b>. O container ja vem em
-     * 1280x720 e muitos jogos ancient tem uma lista fixa de modos: se o modo
-     * pedido nao existir, o jogo simplesmente sai (no aparelho, o NFSU2
-     * fechava sozinho com 1280x720, que nao esta na lista dele - so 640x480,
-     * 800x600, 1024x768, 1280x960, 1280x1024). Forcar 800x600 para todo
-     * jogo 4:3 tambem quebraria os que so aceitam 16:9.
+     * <p>Duas coisas importam aqui:
      *
-     * <p>Excecoes, onde o modo e conhecido:
-     * <ul>
-     *   <li>{@code gta_sa.exe}: 800x600. O GTA San Andreas original so conhece
-     *       modos 4:3 (640x480, 800x600, 1024x768). Em 1280x720 o pedido do
-     *       modo 800x600x32 falha (o proprio exe traz a string
-     *       {@code "Cannot find 800x600x32 video mode"}) e o jogo cai numa
-     *       janela 800x600 no canto da tela.</li>
-     *   <li>{@code speed2.exe} (Need for Speed Underground 2): 800x600, mesmo
-     *       motivo - lista fixa 4:3.</li>
-     * </ul>
+     * <ol>
+     *   <li><b>Nao forcar resolucao.</b> O container ja vem em 1280x720 e muitos
+     *       jogos antigos tem uma lista fixa de modos: se o modo pedido nao
+     *       existir, o jogo simplesmente sai (no aparelho, o NFSU2 fechava
+     *       sozinho com 1280x720, que nao esta na lista dele - so 640x480,
+     *       800x600, 1024x768, 1280x960, 1280x1024).</li>
+     *   <li><b>Nao deixar a tela do container com o mesmo tamanho do modo do
+     *       jogo.</b> O upstream so escala a janela do jogo quando ela e
+     *       MENOR que a tela (GLRenderer: {@code width < screenInfo.width}).
+     *       Com a tela em 800x600 e o jogo tambem em 800x600, nada e escalado:
+     *       a imagem fica pequena no meio. Com a tela em 1280x720, o jogo em
+     *       800x600 e o {@code forceFullscreen} ligado, a imagem e escalada
+     *       para 960x720 centralizado.</li>
+     * </ol>
+     *
+     * <p>Por isso o perfil usa {@code screenSize=1280x720} (a resolucao
+     * padrao do container, maior que o modo 4:3 do jogo) e
+     * {@code forceFullscreen=1}, em vez de 800x600.
      */
     public static Profile profileFor(String executableName) {
         String exe = executableName == null ? "" : executableName.toLowerCase(Locale.ENGLISH);
 
-        if (exe.equals("gta_sa.exe") || exe.equals("gta_sa1.exe") || exe.equals("gta_sa2.exe")) {
-            // WINEESYNC=0: com ESYNC ligado o jogo engasga (medido no aparelho).
-            return new Profile(exe, "800x600", "WINEESYNC=0", null, null);
-        }
-
-        // Need for Speed Underground 2 e os demais jogos da EA da era 2004.
+        // Need for Speed Underground 2 e os demais jogos da EA da era 2004:
+        // lista fixa de modos, todos 4:3 (640x480, 800x600, 1024x768,
+        // 1280x960, 1280x1024).
         if (exe.equals("speed2.exe")) {
-            return new Profile(exe, "800x600", "WINEESYNC=0", null, null);
+            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1");
         }
 
-        // Sem resolucao forcada: o container mantem o padrao dele (1280x720).
-        return new Profile(exe, null, null, null, null);
+        // GTA SA: o proprio exe traz "Cannot find 800x600x32 video mode" quando
+        // o modo 800x600 nao existe, e a tela precisa ser maior que o jogo
+        // para o forceFullscreen escalar.
+        if (exe.equals("gta_sa.exe") || exe.equals("gta_sa1.exe") || exe.equals("gta_sa2.exe")) {
+            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1");
+        }
+
+        // Sem resolucao forcada e sem forcar fullscreen: o container mantem o
+        // padrao dele e o jogo abre como quiser.
+        return new Profile(exe, null, null, null, null, null);
     }
 
     /**

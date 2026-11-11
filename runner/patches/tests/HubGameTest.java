@@ -125,20 +125,23 @@ public final class HubGameTest {
         check("comando final do wine", "/dir C:\\\\users\\\\xuser\\\\hubgame\\\\GT4_S4N_4NDR34S \"gta_sa.exe\"",
                 wineStartCommand(parsed));
 
-        // Perfil do GTA: 800x600, para o modo 800x600x32 existir e o jogo ficar fullscreen.
-        check("perfil do GTA: screenSize", "800x600", profile.screenSize);
+        // NFSU2: lista fixa de modos 4:3. A tela do container tem de ser
+        // MAIOR que o modo do jogo, senao o upstream nao escala (a imagem
+        // fica pequena no meio); por isso 1280x720 e nao 800x600.
+        HubGameProfiles.Profile nfsu2 = HubGameProfiles.profileFor("SPEED2.EXE");
+        check("perfil do NFSU2: screenSize", "1280x720", nfsu2.screenSize);
+        check("perfil do NFSU2: forceFullscreen", "1", nfsu2.forceFullscreen);
+
+        // GTA SA: mesma regra (800x600 e o modo nativo do jogo).
+        check("perfil do GTA: screenSize", "1280x720", profile.screenSize);
+        check("perfil do GTA: forceFullscreen", "1", profile.forceFullscreen);
         check("perfil do GTA: envVars", "WINEESYNC=0", profile.envVars);
 
-        // NFSU2: lista fixa de modos 4:3; 1280x720 nao existe nela e o jogo
-        // saia sozinho.
-        HubGameProfiles.Profile nfsu2 = HubGameProfiles.profileFor("SPEED2.EXE");
-        check("perfil do NFSU2: screenSize", "800x600", nfsu2.screenSize);
-
-        // Jogo desconhecido: nao forcar resolucao. O container ja vem em
-        // 1280x720 e forcar um modo que o jogo nao tem faz ele sair sozinho.
+        // Jogo desconhecido: nao forcar resolucao nem fullscreen.
         HubGameProfiles.Profile other = HubGameProfiles.profileFor("de.exe");
         check("perfil generico: sem screenSize", "", other.screenSize == null ? "" : other.screenSize);
         check("perfil generico: sem envVars", "", other.envVars == null ? "" : other.envVars);
+        check("perfil generico: sem forceFullscreen", "", other.forceFullscreen == null ? "" : other.forceFullscreen);
 
         // O atalho de um jogo generico nao deve ter [Extra Data] sem nada util.
         String genericDesktop = HubGameProfiles.buildDesktopEntry(unixExe, dosExe, "Jogo",
@@ -161,7 +164,8 @@ public final class HubGameTest {
 
         // O perfil tem que ir na secao [Extra Data], que e o que o upstream le.
         check("secao [Extra Data] presente", true, desktop.contains("[Extra Data]"));
-        check("screenSize no Extra Data", true, desktop.contains("screenSize=800x600"));
+        check("screenSize no Extra Data", true, desktop.contains("screenSize=1280x720"));
+        check("forceFullscreen no Extra Data", true, desktop.contains("forceFullscreen=1"));
         check("envVars no Extra Data", true, desktop.contains("envVars=WINEESYNC=0"));
 
         // O importer nao deve trazer instaladores.
