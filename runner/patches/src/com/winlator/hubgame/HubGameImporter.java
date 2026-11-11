@@ -70,9 +70,13 @@ public final class HubGameImporter {
                 if (!copiedExe.isFile() && !FileUtils.copy(exe, copiedExe)) continue;
             }
             else {
-                // Copia so se ainda nao estiver no container: o jogo pode ter
-                // gigabytes e a importacao roda a cada abertura do app.
-                if (!targetDir.isDirectory() && !FileUtils.copy(exeDir, targetDir)) continue;
+                // Espelha a pasta do jogo: copia o que falta, sobrescreve o que
+                // mudou e remove o que sumiu na origem. Sem isso, um mod
+                // desativado na origem (ex.: renomeado para .bak) continuaria
+                // no container, e um .dll de mod quebrado impede o jogo de
+                // carregar. A copia so toca no que difere, entao nao reescreve
+                // gigabytes a cada abertura do app.
+                if (!mirrorDirectory(exeDir, targetDir)) continue;
                 copiedExe = new File(targetDir, exeName);
             }
 
@@ -137,10 +141,56 @@ public final class HubGameImporter {
         return HubGameProfiles.isGameExecutable(fileName);
     }
 
-    /** Compara dois caminhos sem depender do canonical path (o destino nem existe ainda). */
+    /**
+     * Compara dois caminhos sem depender do canonical path (o destino nem existe ainda).
+     */
     private static boolean sameFile(File a, File b) {
         if (a == null || b == null) return false;
         return a.getAbsolutePath().equals(b.getAbsolutePath());
+    }
+
+    /**
+     * Espelha {@code src} em {@code dst}: copia o que falta, sobrescreve o que
+     * mudou e remove o que nao existe mais na origem.
+     *
+     * <p>Comparacao por nome + tamanho + data de modificacao: assim um jogo de
+     * gigabytes so reescreve o que mudou de fato.
+     */
+    static boolean mirrorDirectory(File src, File dst) {
+        if (!src.isDirectory()) return false;
+        if (!dst.isDirectory() && !dst.mkdirs()) return false;
+
+        File[] srcFiles = src.listFiles();
+        if (srcFiles == null) return false;
+
+        for (File srcFile : srcFiles) {
+            File dstFile = new File(dst, srcFile.getName());
+            if (srcFile.isDirectory()) {
+                if (!mirrorDirectory(srcFile, dstFile)) return false;
+            }
+            else if (!sameContent(srcFile, dstFile)) {
+                if (!FileUtils.copy(srcFile, dstFile)) return false;
+            }
+        }
+
+        // Remove o que ficou para tras na origem (mod desativado, por exemplo).
+        File[] dstFiles = dst.listFiles();
+        if (dstFiles != null) {
+            for (File dstFile : dstFiles) {
+                if (!new File(src, dstFile.getName()).exists()) {
+                    FileUtils.delete(dstFile);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /** Verdadeiro quando os dois arquivos tem o mesmo conteudo (mesmo tamanho e mesma data). */
+    private static boolean sameContent(File a, File b) {
+        if (!b.isFile()) return false;
+        if (a.length() != b.length()) return false;
+        return a.lastModified() == b.lastModified();
     }
 
     /** Procura executaveis recursivamente, com limite de profundidade. */
