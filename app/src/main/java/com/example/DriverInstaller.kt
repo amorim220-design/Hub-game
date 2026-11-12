@@ -21,6 +21,7 @@ data class VulkanDriverInfo(
 object DriverInstaller {
     private const val TAG = "VulkanDriverInstaller"
     private const val MAX_ZIP_BYTES = 200L * 1024 * 1024 // 200 MB
+    private const val MAX_ENTRY_COUNT = 5000
 
     fun installDriverFromUri(context: Context, zipUri: Uri): VulkanDriverInfo {
         val driversBaseDir = File(context.filesDir, "drivers")
@@ -30,12 +31,17 @@ object DriverInstaller {
         tempDir.mkdirs()
 
         var totalBytes = 0L
+        var totalEntries = 0
 
         try {
             context.contentResolver.openInputStream(zipUri)?.use { inputStream ->
                 ZipInputStream(BufferedInputStream(inputStream)).use { zis ->
                     var entry: ZipEntry? = zis.nextEntry
                     while (entry != null) {
+                        totalEntries++
+                        if (totalEntries > MAX_ENTRY_COUNT) {
+                            throw SecurityException("Driver ZIP contém mais de $MAX_ENTRY_COUNT arquivos.")
+                        }
                         val entryName = entry.name
                         if (entryName.contains("..")) {
                             throw SecurityException("Tentativa de Zip Slip detectada: $entryName")
@@ -92,7 +98,15 @@ object DriverInstaller {
             }
 
             val driverSo = if (driverFileName != null) {
-                File(tempDir, driverFileName).takeIf { it.exists() } ?: soFiles.first()
+                val requested = File(tempDir, driverFileName).canonicalFile
+                val tempRoot = tempDir.canonicalPath + File.separator
+                if (!requested.canonicalPath.startsWith(tempRoot)) {
+                    throw SecurityException("O caminho do driver sai do pacote: $driverFileName")
+                }
+                if (!requested.isFile || requested.extension != "so") {
+                    throw IllegalArgumentException("A biblioteca informada no meta.json não existe ou não é .so.")
+                }
+                requested
             } else {
                 soFiles.first()
             }
