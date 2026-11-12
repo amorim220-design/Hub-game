@@ -205,7 +205,9 @@ public final class HubGameProfiles {
     private static final String[] NOT_GAMES = {
             "setup.exe", "install.exe", "unins000.exe", "uninstall.exe", "vcredist.exe",
             "vc_redist.exe", "dxsetup.exe", "dxwebsetup.exe", "dotnetfx.exe", "vcredist_x86.exe",
-            "vcredist_x64.exe", "directx.exe", "openal.exe", "7z.exe", "unarc.exe"
+            "vcredist_x64.exe", "directx.exe", "openal.exe", "7z.exe", "unarc.exe",
+            "eauninstall.exe", "easyinfo.exe", "ereg.exe", "need for speed underground 2_code.exe",
+            "need for speed underground 2_uninst.exe", "oride.exe"
     };
 
     /**

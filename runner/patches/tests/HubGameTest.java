@@ -194,6 +194,8 @@ public final class HubGameTest {
         check("gta_sa.exe e jogo", true, HubGameProfiles.isGameExecutable("gta_sa.exe"));
         check("GTA_SA.EXE (maiusculo) e jogo", true, HubGameProfiles.isGameExecutable("GTA_SA.EXE"));
         check("dxsetup.exe nao e jogo", false, HubGameProfiles.isGameExecutable("dxsetup.exe"));
+        check("eauninstall.exe nao e jogo", false, HubGameProfiles.isGameExecutable("eauninstall.exe"));
+        check("EReg.exe nao e jogo", false, HubGameProfiles.isGameExecutable("EReg.exe"));
 
         // A tela do container e o unico modo que o Wine anuncia ao guest. Com o
         // container em 800x600 (modo que o NFSU2 aceita), o renderer do app
