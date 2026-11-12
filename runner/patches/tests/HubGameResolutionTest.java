@@ -15,7 +15,7 @@ public final class HubGameResolutionTest {
 
     /** Resolucoes oferecidas, em ordem (espelha HubGameResolutionDialog). */
     static final String[] RESOLUTIONS = {
-            "640x480", "800x600", "1024x768", "1280x720", "1280x800", "1280x1024", "1600x900", "1920x1080"
+            "640x480", "800x600", "1024x768", "1280x960"
     };
 
     /** Reproduz a montagem da lista e a selecao inicial. */
@@ -57,17 +57,17 @@ public final class HubGameResolutionTest {
     public static void main(String[] args) {
         // O atalho do NFSU2 tem 800x600 -> o dialogo abre nessa.
         check("selecao inicial com 800x600", "1", String.valueOf(selectedIndex("800x600")));
-        check("selecao inicial com 1280x720", "3", String.valueOf(selectedIndex("1280x720")));
+        check("selecao inicial com 1280x960", "3", String.valueOf(selectedIndex("1280x960")));
         check("selecao inicial sem valor", "0", String.valueOf(selectedIndex("")));
 
         // Confirmar grava a resolucao escolhida e liga o fullscreen.
-        check("grava screenSize", "screenSize=1920x1080", extrasWritten("1920x1080").get(0));
-        check("grava forceFullscreen", "forceFullscreen=1", extrasWritten("1920x1080").get(1));
+        check("grava screenSize", "screenSize=1280x960", extrasWritten("1280x960").get(0));
+        check("grava forceFullscreen", "forceFullscreen=1", extrasWritten("1280x960").get(1));
 
         // As resolucoes oferecidas tem de incluir as que os jogos 4:3 aceitam.
         check("inclui 800x600", true, Arrays.asList(RESOLUTIONS).contains("800x600"));
         check("inclui 1024x768", true, Arrays.asList(RESOLUTIONS).contains("1024x768"));
-        check("inclui 1280x1024", true, Arrays.asList(RESOLUTIONS).contains("1280x1024"));
+        check("inclui 1280x960", true, Arrays.asList(RESOLUTIONS).contains("1280x960"));
         check("nao inclui resolucao invalida", false,
                 Arrays.asList(RESOLUTIONS).contains("1920x108"));
 

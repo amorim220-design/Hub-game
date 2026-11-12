@@ -99,7 +99,7 @@ public final class HubGameProfiles {
      *   <li>Se o container estiver num tamanho que o jogo <b>nao aceita</b>, o
      *       jogo nao acha modo e nao renderiza (tela preta com o som tocando).
      *       O NFSU2, por exemplo, so aceita 640x480, 800x600, 1024x768,
-     *       1280x960 e 1280x1024 - 1280x720 nao existe na lista dele.</li>
+     *       1280x960. Modos widescreen e 1280x1024 encerram esta versao do jogo.</li>
      *   <li>Se o container estiver no tamanho que o jogo aceita, o jogo
      *       renderiza em tela cheia dentro da tela do X, e o renderer do app
      *       amplia essa area para a tela fisica: com 800x600 numa tela de
@@ -116,8 +116,8 @@ public final class HubGameProfiles {
         String exe = executableName == null ? "" : executableName.toLowerCase(Locale.ENGLISH);
 
         // Need for Speed Underground 2 e os demais jogos da EA da era 2004:
-        // lista fixa de modos, todos 4:3 (640x480, 800x600, 1024x768,
-        // 1280x960, 1280x1024). Jogo de mouse: olhar e acelerar.
+        // lista fixa de modos estaveis (640x480, 800x600, 1024x768,
+        // 1280x960). Jogo de mouse: olhar e acelerar.
         if (exe.equals("speed2.exe")) {
             return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS, "1");
         }

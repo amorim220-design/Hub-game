@@ -28,7 +28,7 @@ public final class HubGameResolutionDialog {
 
     /** Resolucoes oferecidas, em ordem. */
     private static final String[] RESOLUTIONS = {
-            "640x480", "800x600", "1024x768", "1280x720", "1280x800", "1280x1024", "1600x900", "1920x1080"
+            "640x480", "800x600", "1024x768", "1280x960"
     };
 
     private HubGameResolutionDialog() {
