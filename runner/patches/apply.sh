@@ -186,6 +186,74 @@ else
     echo "patch de sincronizacao de atalhos aplicado em $SHORTCUTS_FRAGMENT"
 fi
 
+
+# --- Fase 2 (parte 3): menu de resolucao dentro do jogo ----------------------
+# O jogador nao deve precisar editar o container para trocar a resolucao. O
+# patch adiciona ao menu lateral do jogo um item "Resolução" que abre um
+# dialogo, grava screenSize no atalho e reinicia a sessao.
+#
+# 1) recursos: layout do dialogo, strings e o item de menu
+HUB_RES_DIR="$APP_ROOT/app/src/main/res"
+if [ ! -d "$HUB_RES_DIR" ]; then
+    echo "upstream sem app/src/main/res: a estrutura mudou?" >&2
+    exit 1
+fi
+
+cp "$PATCHES_DIR"/res/layout/hub_game_resolution_dialog.xml "$HUB_RES_DIR/layout/"
+cp "$PATCHES_DIR"/res/values/hub_game_strings.xml "$HUB_RES_DIR/values/"
+cp "$PATCHES_DIR"/res/menu/xserver_menu.xml "$HUB_RES_DIR/menu/"
+echo "recursos hub-game copiados para $HUB_RES_DIR"
+
+# 2) accessor do atalho + item do menu no XServerDisplayActivity
+XSD="$APP_ROOT/app/src/main/java/com/winlator/XServerDisplayActivity.java"
+if [ ! -f "$XSD" ]; then
+    echo "XServerDisplayActivity.java nao encontrado em $XSD" >&2
+    exit 1
+fi
+
+GET_SHORTCUT_MARKER="public Shortcut getShortcut() {"
+MENU_CASE_MARKER="case R.id.menu_item_hub_game_resolution:"
+
+if grep -q "$GET_SHORTCUT_MARKER" "$XSD" && grep -q "$MENU_CASE_MARKER" "$XSD"; then
+    echo "patch do menu de resolucao ja aplicado"
+else
+    # Accessor do atalho: inserido logo depois do metodo getContainer().
+    if ! grep -q "$GET_SHORTCUT_MARKER" "$XSD"; then
+        TMP_FILE="$(mktemp)"
+        awk -v getter="    public Shortcut getShortcut() {" -v getterBody="        return shortcut;" '
+            { print }
+            $0 == "    public Container getContainer() {" { inGetter = 1 }
+            inGetter && $0 == "    }" {
+                print ""
+                print getter
+                print getterBody
+                print "    }"
+                inGetter = 0
+            }
+        ' "$XSD" > "$TMP_FILE"
+        mv "$TMP_FILE" "$XSD"
+    fi
+
+    # Item do menu: inserido logo depois do case de toggle_fullscreen.
+    if ! grep -q "$MENU_CASE_MARKER" "$XSD"; then
+        TMP_FILE="$(mktemp)"
+        awk -v block="            case R.id.menu_item_hub_game_resolution:
+                com.winlator.hubgame.HubGameResolutionDialog.show(this, shortcut);
+                drawerLayout.closeDrawers();
+                break;" '
+            { print }
+            $0 == "            case R.id.menu_item_toggle_fullscreen:" { inCase = 1 }
+            inCase && $0 == "                break;" {
+                print block
+                inCase = 0
+            }
+        ' "$XSD" > "$TMP_FILE"
+        mv "$TMP_FILE" "$XSD"
+    fi
+
+    echo "patch do menu de resolucao aplicado em $XSD"
+fi
+
 # O import correspondente: sem ele o Java nao compila. Vai para o bloco de
 # imports do upstream, em ordem alfabetica, logo antes do import do RootFS.
 if ! grep -q "$IMPORT_MARKER" "$CONTAINER_MANAGER"; then
@@ -212,5 +280,4 @@ if ! grep -q "$IMPORT_MARKER" "$CONTAINER_MANAGER"; then
     mv "$TMP_FILE" "$CONTAINER_MANAGER"
     echo "import de HubGameBootstrap adicionado em $CONTAINER_MANAGER"
 fi
-
 

@@ -18,6 +18,8 @@ command -v javac >/dev/null || { echo "javac nao encontrado (instale openjdk-17)
 # WineUtils, que vivem no upstream e so existem no build do app.
 javac -d "$OUT" \
     "$SRC/HubGameProfiles.java" \
-    "$HERE/HubGameTest.java"
+    "$HERE/HubGameTest.java" \
+    "$HERE/HubGameResolutionTest.java"
 
 java -cp "$OUT" com.winlator.hubgame.HubGameTest
+java -cp "$OUT" com.winlator.hubgame.HubGameResolutionTest

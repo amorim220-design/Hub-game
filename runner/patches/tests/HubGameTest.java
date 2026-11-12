@@ -145,12 +145,14 @@ public final class HubGameTest {
         check("perfil do NFSU2: screenSize", "800x600", nfsu2.screenSize);
         check("perfil do NFSU2: forceFullscreen", "1", nfsu2.forceFullscreen);
         check("perfil do NFSU2: controlsProfile", "4", nfsu2.controlsProfile);
+        check("perfil do NFSU2: dinputMapperType", "1", nfsu2.dinputMapperType);
 
         // GTA SA: mesmo motivo - so conhece modos 4:3 e o proprio exe traz
         // "Cannot find 800x600x32 video mode".
         check("perfil do GTA: screenSize", "800x600", profile.screenSize);
         check("perfil do GTA: forceFullscreen", "1", profile.forceFullscreen);
         check("perfil do GTA: envVars", "WINEESYNC=0", profile.envVars);
+        check("perfil do GTA: dinputMapperType", "1", profile.dinputMapperType);
 
         // Jogo desconhecido: nao forcar resolucao, fullscreen nem controles.
         HubGameProfiles.Profile other = HubGameProfiles.profileFor("de.exe");
@@ -158,6 +160,7 @@ public final class HubGameTest {
         check("perfil generico: sem envVars", "", other.envVars == null ? "" : other.envVars);
         check("perfil generico: sem forceFullscreen", "", other.forceFullscreen == null ? "" : other.forceFullscreen);
         check("perfil generico: sem controlsProfile", "", other.controlsProfile == null ? "" : other.controlsProfile);
+        check("perfil generico: sem dinputMapperType", "", other.dinputMapperType == null ? "" : other.dinputMapperType);
 
         // O atalho de um jogo generico nao deve ter [Extra Data] sem nada util.
         String genericDesktop = HubGameProfiles.buildDesktopEntry(unixExe, dosExe, "Jogo",
@@ -183,6 +186,7 @@ public final class HubGameTest {
         check("screenSize no Extra Data", true, desktop.contains("screenSize=800x600"));
         check("forceFullscreen no Extra Data", true, desktop.contains("forceFullscreen=1"));
         check("controlsProfile no Extra Data", true, desktop.contains("controlsProfile=4"));
+        check("dinputMapperType no Extra Data", true, desktop.contains("dinputMapperType=1"));
         check("envVars no Extra Data", true, desktop.contains("envVars=WINEESYNC=0"));
 
         // O importer nao deve trazer instaladores.

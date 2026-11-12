@@ -42,9 +42,11 @@ public final class HubGameProfiles {
         public final String forceFullscreen;
         /** Id do perfil de controles na tela (ver assets/inputcontrols/profiles) ou null. */
         public final String controlsProfile;
+        /** Mapeador DirectInput: 1 = XInput, 0 = DirectInput standard. */
+        public final String dinputMapperType;
 
         Profile(String name, String screenSize, String envVars, String dxwrapper, String graphicsDriver,
-                String forceFullscreen, String controlsProfile) {
+                String forceFullscreen, String controlsProfile, String dinputMapperType) {
             this.name = name;
             this.screenSize = screenSize;
             this.envVars = envVars;
@@ -52,6 +54,7 @@ public final class HubGameProfiles {
             this.graphicsDriver = graphicsDriver;
             this.forceFullscreen = forceFullscreen;
             this.controlsProfile = controlsProfile;
+            this.dinputMapperType = dinputMapperType;
         }
 
         /** Monta o conteudo da secao [Extra Data] deste perfil. */
@@ -63,6 +66,7 @@ public final class HubGameProfiles {
             appendIfSet(sb, "envVars", envVars);
             appendIfSet(sb, "forceFullscreen", forceFullscreen);
             appendIfSet(sb, "controlsProfile", controlsProfile);
+            appendIfSet(sb, "dinputMapperType", dinputMapperType);
             return sb.toString();
         }
 
@@ -115,18 +119,18 @@ public final class HubGameProfiles {
         // lista fixa de modos, todos 4:3 (640x480, 800x600, 1024x768,
         // 1280x960, 1280x1024). Jogo de mouse: olhar e acelerar.
         if (exe.equals("speed2.exe")) {
-            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
+            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS, "1");
         }
 
         // GTA SA: o proprio exe traz "Cannot find 800x600x32 video mode" quando
         // o modo 800x600 nao existe - e ele tambem so conhece modos 4:3.
         if (exe.equals("gta_sa.exe") || exe.equals("gta_sa1.exe") || exe.equals("gta_sa2.exe")) {
-            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
+            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS, "1");
         }
 
         // Sem resolucao forcada e sem forcar fullscreen: o container mantem o
         // padrao dele e o jogo abre como quiser.
-        return new Profile(exe, null, null, null, null, null, null);
+        return new Profile(exe, null, null, null, null, null, null, null);
     }
 
     /**
