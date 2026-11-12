@@ -254,6 +254,47 @@ else
     echo "patch do menu de resolucao aplicado em $XSD"
 fi
 
+# Compatibilidade com atalhos criados antes dos perfis do Hub-game. O launcher
+# pode abrir um .desktop antigo sem [Extra Data]; nesse caso o X server cai no
+# padrao 640x480 e o jogo nao entra no modo esperado.
+RUNTIME_PROFILE_MARKER="com.winlator.hubgame.HubGameProfiles.Profile hubGameProfile"
+if ! grep -q "$RUNTIME_PROFILE_MARKER" "$XSD"; then
+    TMP_FILE="$(mktemp)"
+    awk '
+        index($0, "screenInfo = new ScreenInfo(shortcut.getExtra") > 0 {
+            print "                String hubGameScreenSize = shortcut.getExtra(\"screenSize\", \"\");"
+            print "                String hubGameForceFullscreen = shortcut.getExtra(\"forceFullscreen\", \"\");"
+            print "                if (shortcut.path != null && !shortcut.path.isEmpty()) {"
+            print "                    String hubGameExe = FileUtils.getName(shortcut.path);"
+            print "                    com.winlator.hubgame.HubGameProfiles.Profile hubGameProfile = com.winlator.hubgame.HubGameProfiles.profileFor(hubGameExe);"
+            print "                    boolean hubGameKnown = hubGameProfile.screenSize != null && !hubGameProfile.screenSize.isEmpty();"
+            print "                    boolean hubGameChanged = false;"
+            print "                    if (hubGameKnown && hubGameScreenSize.isEmpty()) {"
+            print "                        hubGameScreenSize = hubGameProfile.screenSize;"
+            print "                        shortcut.putExtra(\"screenSize\", hubGameScreenSize);"
+            print "                        hubGameChanged = true;"
+            print "                    }"
+            print "                    if (hubGameKnown && hubGameForceFullscreen.isEmpty() && hubGameProfile.forceFullscreen != null) {"
+            print "                        hubGameForceFullscreen = hubGameProfile.forceFullscreen;"
+            print "                        shortcut.putExtra(\"forceFullscreen\", hubGameForceFullscreen);"
+            print "                        hubGameChanged = true;"
+            print "                    }"
+            print "                    if (hubGameChanged) shortcut.saveData();"
+            print "                }"
+            print "                screenInfo = new ScreenInfo(hubGameScreenSize.isEmpty() ? container.getScreenSize() : hubGameScreenSize);"
+            next
+        }
+        { print }
+    ' "$XSD" > "$TMP_FILE"
+    if ! grep -q "$RUNTIME_PROFILE_MARKER" "$TMP_FILE"; then
+        rm -f "$TMP_FILE"
+        echo "ancora de screenSize nao encontrada em $XSD - o upstream mudou?" >&2
+        exit 1
+    fi
+    mv "$TMP_FILE" "$XSD"
+    echo "fallback de perfil Hub-game aplicado em $XSD"
+fi
+
 # O import correspondente: sem ele o Java nao compila. Vai para o bloco de
 # imports do upstream, em ordem alfabetica, logo antes do import do RootFS.
 if ! grep -q "$IMPORT_MARKER" "$CONTAINER_MANAGER"; then
@@ -280,4 +321,3 @@ if ! grep -q "$IMPORT_MARKER" "$CONTAINER_MANAGER"; then
     mv "$TMP_FILE" "$CONTAINER_MANAGER"
     echo "import de HubGameBootstrap adicionado em $CONTAINER_MANAGER"
 fi
-

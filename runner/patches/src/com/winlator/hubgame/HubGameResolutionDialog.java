@@ -1,6 +1,6 @@
 package com.winlator.hubgame;
 
-import android.content.Context;
+import android.app.Activity;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Spinner;
@@ -37,12 +37,12 @@ public final class HubGameResolutionDialog {
     /**
      * Mostra o dialogo de resolucao.
      *
-     * @param context  contexto (a atividade do jogo)
+     * @param activity contexto (a atividade do jogo)
      * @param shortcut atalho do jogo (pode ser null quando o jogo foi aberto
      *                 direto pelo gerenciador de arquivos)
      */
-    public static void show(final Context context, final Shortcut shortcut) {
-        final ContentDialog dialog = new ContentDialog(context, R.layout.hub_game_resolution_dialog);
+    public static void show(final Activity activity, final Shortcut shortcut) {
+        final ContentDialog dialog = new ContentDialog(activity, R.layout.hub_game_resolution_dialog);
         dialog.setTitle(R.string.hub_game_resolution);
         dialog.setIcon(R.drawable.icon_display_settings);
 
@@ -56,7 +56,7 @@ public final class HubGameResolutionDialog {
             if (RESOLUTIONS[i].equals(current)) selected = i;
         }
 
-        spinner.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, items));
+        spinner.setAdapter(new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item, items));
         spinner.setSelection(selected);
 
         dialog.setOnConfirmCallback(() -> {
@@ -76,7 +76,9 @@ public final class HubGameResolutionDialog {
 
             // A sessao precisa recomecar: a tela do X (e o unico modo
             // anunciado ao guest) e criada no inicio da sessao.
-            AppUtils.restartApplication(context);
+            // Preserve the current shortcut_path/container_id intent. Restarting the
+            // whole application loses the game shortcut and returns to the launcher.
+            AppUtils.restartActivity(activity);
         });
 
         dialog.show();
