@@ -86,26 +86,27 @@ public final class HubGameProfiles {
     /**
      * Perfil padrao de um executavel.
      *
-     * <p>Duas coisas importam aqui:
+     * <p>O ponto central aqui e o modo de video do container. O Wine anuncia
+     * <b>um unico modo</b> ao guest, exatamente o tamanho da tela do X, que o
+     * app define como {@code screenSize} (WindowManager cria a raiz do X com
+     * {@code screenInfo.width x screenInfo.height}). Logo:
      *
-     * <ol>
-     *   <li><b>Nao forcar resolucao.</b> O container ja vem em 1280x720 e muitos
-     *       jogos antigos tem uma lista fixa de modos: se o modo pedido nao
-     *       existir, o jogo simplesmente sai (no aparelho, o NFSU2 fechava
-     *       sozinho com 1280x720, que nao esta na lista dele - so 640x480,
-     *       800x600, 1024x768, 1280x960, 1280x1024).</li>
-     *   <li><b>Nao deixar a tela do container com o mesmo tamanho do modo do
-     *       jogo.</b> O upstream so escala a janela do jogo quando ela e
-     *       MENOR que a tela (GLRenderer: {@code width < screenInfo.width}).
-     *       Com a tela em 800x600 e o jogo tambem em 800x600, nada e escalado:
-     *       a imagem fica pequena no meio. Com a tela em 1280x720, o jogo em
-     *       800x600 e o {@code forceFullscreen} ligado, a imagem e escalada
-     *       para 960x720 centralizado.</li>
-     * </ol>
+     * <ul>
+     *   <li>Se o container estiver num tamanho que o jogo <b>nao aceita</b>, o
+     *       jogo nao acha modo e nao renderiza (tela preta com o som tocando).
+     *       O NFSU2, por exemplo, so aceita 640x480, 800x600, 1024x768,
+     *       1280x960 e 1280x1024 - 1280x720 nao existe na lista dele.</li>
+     *   <li>Se o container estiver no tamanho que o jogo aceita, o jogo
+     *       renderiza em tela cheia dentro da tela do X, e o renderer do app
+     *       amplia essa area para a tela fisica: com 800x600 numa tela de
+     *       2400x1080, o fator e {@code min(2400/800, 1080/600) = 1.8} e a
+     *       imagem sai com 1440x1080, centralizada, occupying a altura toda.</li>
+     * </ul>
      *
-     * <p>Por isso o perfil usa {@code screenSize=1280x720} (a resolucao
-     * padrao do container, maior que o modo 4:3 do jogo) e
-     * {@code forceFullscreen=1}, em vez de 800x600.
+     * <p>Por isso o perfil usa 800x600 (o modo nativo do NFSU2 e do GTA SA, que
+     * tambem so conhece modos 4:3) em vez de 1280x720. E o
+     * {@code forceFullscreen=1} mantem a janela do jogo preenchendo a tela do X
+     * em vez de ficar numa janelazinha no canto.
      */
     public static Profile profileFor(String executableName) {
         String exe = executableName == null ? "" : executableName.toLowerCase(Locale.ENGLISH);
@@ -114,14 +115,13 @@ public final class HubGameProfiles {
         // lista fixa de modos, todos 4:3 (640x480, 800x600, 1024x768,
         // 1280x960, 1280x1024). Jogo de mouse: olhar e acelerar.
         if (exe.equals("speed2.exe")) {
-            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
+            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
         }
 
         // GTA SA: o proprio exe traz "Cannot find 800x600x32 video mode" quando
-        // o modo 800x600 nao existe, e a tela precisa ser maior que o jogo
-        // para o forceFullscreen escalar.
+        // o modo 800x600 nao existe - e ele tambem so conhece modos 4:3.
         if (exe.equals("gta_sa.exe") || exe.equals("gta_sa1.exe") || exe.equals("gta_sa2.exe")) {
-            return new Profile(exe, "1280x720", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
+            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS);
         }
 
         // Sem resolucao forcada e sem forcar fullscreen: o container mantem o

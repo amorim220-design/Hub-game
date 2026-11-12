@@ -109,6 +109,16 @@ public final class HubGameTest {
         check(label, String.valueOf(expected), String.valueOf(actual));
     }
 
+    /**
+     * Copia literal de com.winlator.renderer.ViewTransformation (upstream): e o
+     * que decide o tamanho da area util na tela fisica.
+     */
+    static int[] scaledArea(int outerWidth, int outerHeight, int innerWidth, int innerHeight) {
+        float aspect = Math.min((float) outerWidth / innerWidth, (float) outerHeight / innerHeight);
+        return new int[]{Math.min((int) Math.ceil(innerWidth * aspect), outerWidth),
+                Math.min((int) Math.ceil(innerHeight * aspect), outerHeight)};
+    }
+
     public static void main(String[] args) {
         String root = "/data/data/com.winlator/files/rootfs/home/xuser";
         String unixExe = root + "/.wine/drive_c/users/xuser/hubgame/GT4_S4N_4NDR34S/gta_sa.exe";
@@ -125,18 +135,20 @@ public final class HubGameTest {
         check("comando final do wine", "/dir C:\\\\users\\\\xuser\\\\hubgame\\\\GT4_S4N_4NDR34S \"gta_sa.exe\"",
                 wineStartCommand(parsed));
 
-        // NFSU2: lista fixa de modos 4:3. A tela do container tem de ser
-        // MAIOR que o modo do jogo, senao o upstream nao escala (a imagem
-        // fica pequena no meio); por isso 1280x720 e nao 800x600. E um jogo de
-        // mouse: o perfil de controles precisa ser o FPS (id 4), que tem
-        // mouseMoveMode.
+        // NFSU2: o Wine anuncia UM unico modo ao guest - o tamanho da tela do
+        // X, que e o screenSize do container. O NFSU2 so aceita modos 4:3
+        // (640x480, 800x600, 1024x768, 1280x960, 1280x1024), entao o
+        // container tem de ser 800x600 - em 1280x720 o jogo nao acha modo e
+        // nao renderiza. Com 800x600, o renderer amplia a area para
+        // 1440x1080 (100% da altura da tela).
         HubGameProfiles.Profile nfsu2 = HubGameProfiles.profileFor("SPEED2.EXE");
-        check("perfil do NFSU2: screenSize", "1280x720", nfsu2.screenSize);
+        check("perfil do NFSU2: screenSize", "800x600", nfsu2.screenSize);
         check("perfil do NFSU2: forceFullscreen", "1", nfsu2.forceFullscreen);
         check("perfil do NFSU2: controlsProfile", "4", nfsu2.controlsProfile);
 
-        // GTA SA: mesma regra (800x600 e o modo nativo do jogo).
-        check("perfil do GTA: screenSize", "1280x720", profile.screenSize);
+        // GTA SA: mesmo motivo - so conhece modos 4:3 e o proprio exe traz
+        // "Cannot find 800x600x32 video mode".
+        check("perfil do GTA: screenSize", "800x600", profile.screenSize);
         check("perfil do GTA: forceFullscreen", "1", profile.forceFullscreen);
         check("perfil do GTA: envVars", "WINEESYNC=0", profile.envVars);
 
@@ -168,7 +180,7 @@ public final class HubGameTest {
 
         // O perfil tem que ir na secao [Extra Data], que e o que o upstream le.
         check("secao [Extra Data] presente", true, desktop.contains("[Extra Data]"));
-        check("screenSize no Extra Data", true, desktop.contains("screenSize=1280x720"));
+        check("screenSize no Extra Data", true, desktop.contains("screenSize=800x600"));
         check("forceFullscreen no Extra Data", true, desktop.contains("forceFullscreen=1"));
         check("controlsProfile no Extra Data", true, desktop.contains("controlsProfile=4"));
         check("envVars no Extra Data", true, desktop.contains("envVars=WINEESYNC=0"));
@@ -178,6 +190,18 @@ public final class HubGameTest {
         check("gta_sa.exe e jogo", true, HubGameProfiles.isGameExecutable("gta_sa.exe"));
         check("GTA_SA.EXE (maiusculo) e jogo", true, HubGameProfiles.isGameExecutable("GTA_SA.EXE"));
         check("dxsetup.exe nao e jogo", false, HubGameProfiles.isGameExecutable("dxsetup.exe"));
+
+        // A tela do container e o unico modo que o Wine anuncia ao guest. Com o
+        // container em 800x600 (modo que o NFSU2 aceita), o renderer do app
+        // amplia a area util para 1440x1080 - 100% da altura da tela de
+        // 2400x1080. Com 1280x720 (modo que o NFSU2 nao aceita), o jogo nao
+        // renderiza.
+        int[] area = scaledArea(2400, 1080, 800, 600);
+        check("area util em 800x600 (largura)", "1440", String.valueOf(area[0]));
+        check("area util em 800x600 (altura = tela toda)", "1080", String.valueOf(area[1]));
+
+        int[] area720 = scaledArea(2400, 1080, 1280, 720);
+        check("area util em 1280x720 (altura = tela toda)", "1080", String.valueOf(area720[1]));
 
         System.out.println();
         if (failures == 0) {
