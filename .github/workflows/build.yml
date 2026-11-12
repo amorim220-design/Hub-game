@@ -71,45 +71,35 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Create the release keystore (CI placeholder)
-        run: |
-          if [ ! -f my-upload-key.jks ]; then
-            keytool -genkey -v -keystore my-upload-key.jks \
-              -storepass android -alias upload -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Upload Key,O=Android,C=US"
-          fi
-
       - name: Unit tests (Robolectric)
-        continue-on-error: true
         run: ./gradlew --no-daemon :app:testDebugUnitTest
 
-      - name: Assemble debug and release APKs
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      # Release builds are produced only with a stable signing key from secrets.
+      # A throwaway CI key changes the signature on each clean runner and blocks updates.
+      - name: Configure release signing
+        id: release-signing
         env:
-          KEYSTORE_PATH: my-upload-key.jks
-          STORE_PASSWORD: android
-          KEY_PASSWORD: android
-          KEY_ALIAS: upload
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
-          set +e
-          ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease 2>&1 | tee build.log
-          status=${PIPESTATUS[0]}
-          {
-            echo "### Gradle build output"
-            echo '```'
-            tail -n 250 build.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # Surface the interesting lines as annotations, so they are visible
-          # from the API and in the checks tab without downloading the log.
-          {
-            grep -E "^e: |error:|CMake Error|ndk-build:|Execution failed for task" build.log | head -40
-            echo "--- context ---"
-            awk '/What went wrong|CMake Error|error:/{flag=1} flag{print; n++} n>30{exit}' build.log
-          } | while IFS= read -r line; do
-              echo "::error title=Gradle::${line}"
-            done
-          exit $status
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Release APK skipped: configure the release signing secrets."
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload-key.jks"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble signed release APK
+        if: steps.release-signing.outputs.configured == 'true'
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/upload-key.jks
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: ./gradlew --no-daemon :app:assembleRelease
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -119,7 +109,8 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-      - name: Upload release APK (already signed by AGP)
+      - name: Upload signed release APK
+        if: steps.release-signing.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: VulkanCompatShell-release
