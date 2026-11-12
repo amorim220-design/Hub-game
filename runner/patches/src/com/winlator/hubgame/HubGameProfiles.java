@@ -44,9 +44,11 @@ public final class HubGameProfiles {
         public final String controlsProfile;
         /** Mapeador DirectInput: 1 = XInput, 0 = DirectInput standard. */
         public final String dinputMapperType;
+        /** Argumentos adicionais do executavel, ou null. */
+        public final String execArgs;
 
         Profile(String name, String screenSize, String envVars, String dxwrapper, String graphicsDriver,
-                String forceFullscreen, String controlsProfile, String dinputMapperType) {
+                String forceFullscreen, String controlsProfile, String dinputMapperType, String execArgs) {
             this.name = name;
             this.screenSize = screenSize;
             this.envVars = envVars;
@@ -55,6 +57,7 @@ public final class HubGameProfiles {
             this.forceFullscreen = forceFullscreen;
             this.controlsProfile = controlsProfile;
             this.dinputMapperType = dinputMapperType;
+            this.execArgs = execArgs;
         }
 
         /** Monta o conteudo da secao [Extra Data] deste perfil. */
@@ -67,6 +70,7 @@ public final class HubGameProfiles {
             appendIfSet(sb, "forceFullscreen", forceFullscreen);
             appendIfSet(sb, "controlsProfile", controlsProfile);
             appendIfSet(sb, "dinputMapperType", dinputMapperType);
+            appendIfSet(sb, "execArgs", execArgs);
             return sb.toString();
         }
 
@@ -119,18 +123,24 @@ public final class HubGameProfiles {
         // lista fixa de modos estaveis (640x480, 800x600, 1024x768,
         // 1280x960). Jogo de mouse: olhar e acelerar.
         if (exe.equals("speed2.exe")) {
-            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS, "1");
+            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS, "1", null);
         }
 
         // GTA SA: o proprio exe traz "Cannot find 800x600x32 video mode" quando
         // o modo 800x600 nao existe - e ele tambem so conhece modos 4:3.
         if (exe.equals("gta_sa.exe") || exe.equals("gta_sa1.exe") || exe.equals("gta_sa2.exe")) {
-            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS, "1");
+            return new Profile(exe, "800x600", "WINEESYNC=0", null, null, "1", CONTROLS_PROFILE_FPS, "1", null);
+        }
+
+        // Ori DE e um Unity 5.3 32-bit. Forcar D3D9 evita que o Unity tente
+        // criar um dispositivo D3D11 que fica preso no logo neste aparelho Mali.
+        if (exe.equals("oride.exe")) {
+            return new Profile(exe, "1280x720", "WINEESYNC=0", "wined3d", "gladio", "1", CONTROLS_PROFILE_FPS, "1", "-force-d3d9");
         }
 
         // Sem resolucao forcada e sem forcar fullscreen: o container mantem o
         // padrao dele e o jogo abre como quiser.
-        return new Profile(exe, null, null, null, null, null, null, null);
+        return new Profile(exe, null, null, null, null, null, null, null, null);
     }
 
     /**

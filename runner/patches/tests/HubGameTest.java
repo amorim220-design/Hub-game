@@ -153,6 +153,10 @@ public final class HubGameTest {
         check("perfil do GTA: forceFullscreen", "1", profile.forceFullscreen);
         check("perfil do GTA: envVars", "WINEESYNC=0", profile.envVars);
         check("perfil do GTA: dinputMapperType", "1", profile.dinputMapperType);
+        HubGameProfiles.Profile ori = HubGameProfiles.profileFor("oriDE.exe");
+        check("perfil do Ori: dxwrapper", "wined3d", ori.dxwrapper);
+        check("perfil do Ori: graphicsDriver", "gladio", ori.graphicsDriver);
+        check("perfil do Ori: execArgs", "-force-d3d9", ori.execArgs);
 
         // Jogo desconhecido: nao forcar resolucao, fullscreen nem controles.
         HubGameProfiles.Profile other = HubGameProfiles.profileFor("de.exe");
@@ -161,6 +165,7 @@ public final class HubGameTest {
         check("perfil generico: sem forceFullscreen", "", other.forceFullscreen == null ? "" : other.forceFullscreen);
         check("perfil generico: sem controlsProfile", "", other.controlsProfile == null ? "" : other.controlsProfile);
         check("perfil generico: sem dinputMapperType", "", other.dinputMapperType == null ? "" : other.dinputMapperType);
+        check("perfil generico: sem execArgs", "", other.execArgs == null ? "" : other.execArgs);
 
         // O atalho de um jogo generico nao deve ter [Extra Data] sem nada util.
         String genericDesktop = HubGameProfiles.buildDesktopEntry(unixExe, dosExe, "Jogo",
