@@ -295,6 +295,65 @@ if ! grep -q "$RUNTIME_PROFILE_MARKER" "$XSD"; then
     echo "fallback de perfil Hub-game aplicado em $XSD"
 fi
 
+# Reinicio controlado do seletor de resolucao. O callback normal do processo
+# Wine chama exit(), que usa Runtime.exit(0); durante a troca de resolucao isso
+# mataria o processo antes da nova XServerDisplayActivity ser criada.
+RESOLUTION_RESTART_FIELD="private boolean hubGameRestarting;"
+RESOLUTION_RESTART_METHOD="restartForHubGameResolution()"
+if ! grep -q "$RESOLUTION_RESTART_FIELD" "$XSD"; then
+    TMP_FILE="$(mktemp)"
+    awk '
+        $0 == "    private Shortcut shortcut;" {
+            print
+            print "    private boolean hubGameRestarting;"
+            next
+        }
+        { print }
+    ' "$XSD" > "$TMP_FILE"
+    if ! grep -q "$RESOLUTION_RESTART_FIELD" "$TMP_FILE"; then
+        rm -f "$TMP_FILE"
+        echo "campo de guarda de reinicio nao inserido em $XSD - o upstream mudou?" >&2
+        exit 1
+    fi
+    mv "$TMP_FILE" "$XSD"
+fi
+
+if ! grep -q "$RESOLUTION_RESTART_METHOD" "$XSD"; then
+    TMP_FILE="$(mktemp)"
+    awk '
+        $0 == "    private void exit() {" {
+            print "    public void restartForHubGameResolution() {"
+            print "        hubGameRestarting = true;"
+            print "        AppUtils.restartActivity(this);"
+            print "    }"
+            print ""
+            print
+            next
+        }
+        { print }
+    ' "$XSD" > "$TMP_FILE"
+    if ! grep -q "$RESOLUTION_RESTART_METHOD" "$TMP_FILE"; then
+        rm -f "$TMP_FILE"
+        echo "metodo de reinicio de resolucao nao inserido em $XSD - o upstream mudou?" >&2
+        exit 1
+    fi
+    mv "$TMP_FILE" "$XSD"
+fi
+
+if grep -q 'guestProgramLauncherComponent.setTerminationCallback((status) -> exit());' "$XSD"; then
+    TMP_FILE="$(mktemp)"
+    awk '
+        $0 == "        guestProgramLauncherComponent.setTerminationCallback((status) -> exit());" {
+            print "        guestProgramLauncherComponent.setTerminationCallback((status) -> {"
+            print "            if (!hubGameRestarting) exit();"
+            print "        });"
+            next
+        }
+        { print }
+    ' "$XSD" > "$TMP_FILE"
+    mv "$TMP_FILE" "$XSD"
+fi
+
 # O import correspondente: sem ele o Java nao compila. Vai para o bloco de
 # imports do upstream, em ordem alfabetica, logo antes do import do RootFS.
 if ! grep -q "$IMPORT_MARKER" "$CONTAINER_MANAGER"; then

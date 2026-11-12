@@ -6,9 +6,9 @@ import android.widget.ArrayAdapter;
 import android.widget.Spinner;
 
 import com.winlator.R;
+import com.winlator.XServerDisplayActivity;
 import com.winlator.contentdialog.ContentDialog;
 import com.winlator.container.Shortcut;
-import com.winlator.core.AppUtils;
 
 import java.util.ArrayList;
 
@@ -78,7 +78,7 @@ public final class HubGameResolutionDialog {
             // anunciado ao guest) e criada no inicio da sessao.
             // Preserve the current shortcut_path/container_id intent. Restarting the
             // whole application loses the game shortcut and returns to the launcher.
-            AppUtils.restartActivity(activity);
+            ((XServerDisplayActivity) activity).restartForHubGameResolution();
         });
 
         dialog.show();
