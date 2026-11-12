@@ -109,7 +109,10 @@ object DriverInstaller {
                 tempDir.deleteRecursively()
             }
 
-            val installedSo = File(finalDir, driverSo.name)
+            // Preserve the library's path inside the ZIP. Drivers commonly
+            // place their .so under a directory such as "lib/arm64-v8a/".
+            val driverRelativePath = driverSo.relativeTo(tempDir).path
+            val installedSo = File(finalDir, driverRelativePath)
             installedSo.setExecutable(true, false)
 
             val metaOut = JSONObject().apply {
@@ -118,7 +121,7 @@ object DriverInstaller {
                 put("version", driverVersion)
                 put("author", driverAuthor)
                 put("minVulkanVersion", minVulkan)
-                put("driverFileName", installedSo.name)
+                put("driverFileName", driverRelativePath)
             }
             File(finalDir, "meta.json").writeText(metaOut.toString(2))
 
