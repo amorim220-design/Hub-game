@@ -10,6 +10,17 @@ runtime fornecidos pelo usuário.
 
 ---
 
+## Foco do Hub-game e caminhos de execução
+
+O repositório mantém duas formas diferentes de executar jogos:
+
+- **`runner/` (Winlator)**: usa Wine e Box64 para carregar jogos Windows. É o caminho mais abrangente para testar jogos de PC, mas cada título precisa de um perfil e pode ter custos de desempenho ou incompatibilidades.
+- **`app/` (VulkanCompatShell)**: carrega um motor recompilado para ARM64 como biblioteca Android. Pode reduzir a sobrecarga, mas exige uma recompilação e integração específicas para cada jogo; não executa qualquer arquivo `.exe`.
+
+Para o objetivo de compatibilidade ampla, comece pelo runner e mantenha a opção nativa apenas para jogos que tenham um port ARM64 funcional. A escolha deve ser feita por jogo, medindo estabilidade, resposta dos controles, imagem e desempenho em aparelhos reais. Nenhum dos dois caminhos garante ausência de engasgos em todos os jogos.
+
+---  
+
 ## 1. Arquitetura Geral do Sistema
 
 ```
