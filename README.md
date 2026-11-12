@@ -262,15 +262,18 @@ export STORE_PASSWORD=... KEY_PASSWORD=... KEY_ALIAS=upload
 ./gradlew :app:assembleRelease
 ```
 
-Sem `KEYSTORE_PATH`/`STORE_PASSWORD`/`KEY_PASSWORD`, o build release usa o
-keystore de debug (o APK sai instalável, mas não é o que vai para a Play
-Store).
+Para uma release distribuível, configure uma chave estável em
+`KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_PASSWORD` e `KEY_ALIAS`.
+Sem ela, não distribua um APK release assinado com a chave de debug.
 
 ### CI (GitHub Actions)
 
-`.github/workflows/build.yml` faz: checkout → JDK 17 → SDK/NDK/CMake →
-keystores → testes → `assembleDebug`/`assembleRelease` → upload dos artefatos.
-O APK release já sai assinado pelo AGP (não há passo extra de `apksigner`).
+`.github/workflows/build.yml` executa os testes como etapa obrigatória e sempre
+gera o APK debug. O APK release só é gerado quando estão configurados os
+segredos `RELEASE_KEYSTORE_BASE64`, `RELEASE_STORE_PASSWORD`,
+`RELEASE_KEY_PASSWORD` e `RELEASE_KEY_ALIAS`. Assim a CI não cria uma chave
+temporária que mudaria a assinatura em cada build. O teste de GPU e o teste de
+jogos ainda precisam ser feitos em aparelhos reais.
 
 ---
 
